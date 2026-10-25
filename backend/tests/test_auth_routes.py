@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from datetime import timedelta
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -181,6 +182,89 @@ def test_me_rejects_expired_token() -> None:
         )
 
     assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Invalid or expired authentication credentials."
+    )
+
+
+def test_me_rejects_inactive_user() -> None:
+    from unittest.mock import patch
+
+    from pydantic import SecretStr
+
+    password = "a-secure-test-password"
+
+    registration = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "inactive@example.com",
+            "password": password,
+        },
+    )
+    assert registration.status_code == 201
+    user_id = registration.json()["id"]
+
+    with TestingSessionLocal() as db:
+        user = db.scalar(select(User).where(User.id == UUID(user_id)))
+        assert user is not None
+        user.is_active = False
+        db.commit()
+
+    test_settings = type(
+        "TestSettings",
+        (),
+        {
+            "jwt_secret_key": SecretStr(
+                "unit-test-secret-not-production-32-bytes-minimum"
+            ),
+            "access_token_expire_minutes": 30,
+        },
+    )()
+
+    with patch("app.core.security.get_settings", return_value=test_settings):
+        token = create_access_token(subject=user_id)
+
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json()["detail"] == (
+        "Invalid or expired authentication credentials."
+    )
+
+
+def test_me_rejects_token_for_nonexistent_user() -> None:
+    from unittest.mock import patch
+    from uuid import uuid4
+
+    from pydantic import SecretStr
+
+    test_settings = type(
+        "TestSettings",
+        (),
+        {
+            "jwt_secret_key": SecretStr(
+                "unit-test-secret-not-production-32-bytes-minimum"
+            ),
+            "access_token_expire_minutes": 30,
+        },
+    )()
+
+    nonexistent_user_id = str(uuid4())
+
+    with patch("app.core.security.get_settings", return_value=test_settings):
+        token = create_access_token(subject=nonexistent_user_id)
+
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
     assert response.json()["detail"] == (
         "Invalid or expired authentication credentials."
     )
