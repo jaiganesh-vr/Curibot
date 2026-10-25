@@ -9,88 +9,61 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* Colour tokens, named by role. App.css uses only these. */
-  --color-bg: #ffffff;
-  --color-sidebar: #f9f9f9;
-  --color-surface: #ffffff;
-  --color-surface-muted: #f9fafb;
-  --color-hover: #f3f4f6;
-  --color-text: #202123;
-  --color-muted: #6b7280;
-  --color-border: #e5e7eb;
-  --color-border-strong: #d1d5db;
-  --color-tint-hover: rgb(0 0 0 / 4%);
-  --color-tint-active: rgb(0 0 0 / 5%);
-  --color-tint-pressed: rgb(0 0 0 / 6%);
+  /*
+   * Colour tokens, named by role; App.css uses only these. Each is
+   * light-dark(light, dark): color-scheme picks one, from the system
+   * setting or from the theme switcher (see the [data-theme] rules).
+   * Every dark text pairing meets WCAG AA; the primary colour inverts so
+   * the logo tile and primary buttons become light-on-dark.
+   */
+  --color-bg: light-dark(#ffffff, #17181c);
+  --color-sidebar: light-dark(#f9f9f9, #1e1f24);
+  --color-surface: light-dark(#ffffff, #24262c);
+  --color-surface-muted: light-dark(#f9fafb, #1b1c21);
+  --color-hover: light-dark(#f3f4f6, #2e3037);
+  --color-text: light-dark(#202123, #e8e9ec);
+  --color-muted: light-dark(#6b7280, #a1a7b3);
+  --color-border: light-dark(#e5e7eb, #2f3137);
+  --color-border-strong: light-dark(#d1d5db, #4a4e57);
+  --color-tint-hover: light-dark(rgb(0 0 0 / 4%), rgb(255 255 255 / 5%));
+  --color-tint-active: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 7%));
+  --color-tint-pressed: light-dark(rgb(0 0 0 / 6%), rgb(255 255 255 / 9%));
 
-  --color-primary: #202123;
-  --color-primary-hover: #3f4148;
-  --color-primary-text: #ffffff;
+  --color-primary: light-dark(#202123, #e8e9ec);
+  --color-primary-hover: light-dark(#3f4148, #c4c7ce);
+  --color-primary-text: light-dark(#ffffff, #17181c);
 
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
   --color-on-accent: #ffffff;
-  --color-link: #2563eb;
-  --color-link-hover: #1d4ed8;
+  --color-link: light-dark(#2563eb, #7cb4fb);
+  --color-link-hover: light-dark(#1d4ed8, #a5cbfd);
 
   --color-danger: #dc2626;
   --color-danger-hover: #b91c1c;
   --color-on-danger: #ffffff;
-  --color-danger-text: #b91c1c;
-  --color-danger-soft: #fef2f2;
-  --color-success-text: #166534;
+  --color-danger-text: light-dark(#b91c1c, #f87171);
+  --color-danger-soft: light-dark(#fef2f2, rgb(248 113 113 / 12%));
+  --color-success-text: light-dark(#166534, #4ade80);
 
-  --color-avatar-bg: #e5e7eb;
-  --color-avatar-text: #374151;
-  --color-user-avatar-bg: #e2e8f0;
-  --color-user-avatar-text: #334155;
-  --color-assistant-avatar-bg: #343541;
-  --color-assistant-avatar-text: #ffffff;
+  --color-avatar-bg: light-dark(#e5e7eb, #33363d);
+  --color-avatar-text: light-dark(#374151, #d1d5db);
+  --color-user-avatar-bg: light-dark(#e2e8f0, #3a4455);
+  --color-user-avatar-text: light-dark(#334155, #e2e8f0);
+  --color-assistant-avatar-bg: light-dark(#343541, #d6d8dd);
+  --color-assistant-avatar-text: light-dark(#ffffff, #17181c);
 
-  --color-code-block-bg: #1f2937;
+  --color-code-block-bg: light-dark(#1f2937, #0f1013);
   --color-code-block-text: #e5e7eb;
 }
 
-/*
- * Dark theme, following the system setting. Every text pairing meets WCAG
- * AA (4.5:1); the primary colour inverts so dark-on-light buttons and the
- * logo tile become light-on-dark.
- */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #17181c;
-    --color-sidebar: #1e1f24;
-    --color-surface: #24262c;
-    --color-surface-muted: #1b1c21;
-    --color-hover: #2e3037;
-    --color-text: #e8e9ec;
-    --color-muted: #a1a7b3;
-    --color-border: #2f3137;
-    --color-border-strong: #4a4e57;
-    --color-tint-hover: rgb(255 255 255 / 5%);
-    --color-tint-active: rgb(255 255 255 / 7%);
-    --color-tint-pressed: rgb(255 255 255 / 9%);
+/* An explicit choice from the theme switcher overrides the system setting. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
 
-    --color-primary: #e8e9ec;
-    --color-primary-hover: #c4c7ce;
-    --color-primary-text: #17181c;
-
-    --color-link: #7cb4fb;
-    --color-link-hover: #a5cbfd;
-
-    --color-danger-text: #f87171;
-    --color-danger-soft: rgb(248 113 113 / 12%);
-    --color-success-text: #4ade80;
-
-    --color-avatar-bg: #33363d;
-    --color-avatar-text: #d1d5db;
-    --color-user-avatar-bg: #3a4455;
-    --color-user-avatar-text: #e2e8f0;
-    --color-assistant-avatar-bg: #d6d8dd;
-    --color-assistant-avatar-text: #17181c;
-
-    --color-code-block-bg: #0f1013;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {

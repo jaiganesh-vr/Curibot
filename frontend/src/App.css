@@ -295,6 +295,51 @@
   }
 }
 
+/* A compact segmented control for System / Light / Dark. */
+.theme-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin: 0 8px 12px;
+  padding: 3px;
+  background: var(--color-tint-active);
+  border-radius: 9px;
+}
+
+.theme-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.theme-option:hover {
+  color: var(--color-text);
+}
+
+.theme-option[aria-pressed="true"] {
+  color: var(--color-text);
+  background: var(--color-surface);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 12%);
+}
+
+.theme-icon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+
 .sidebar-footer {
   display: flex;
   align-items: center;

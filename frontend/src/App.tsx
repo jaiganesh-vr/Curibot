@@ -26,10 +26,12 @@ import {
 import ConfirmDialog from "./ConfirmDialog";
 import MarkdownMessage from "./MarkdownMessage";
 import StreamingReply from "./StreamingReply";
+import ThemeSwitcher from "./ThemeSwitcher";
 import {
   useConnectionStatus,
   type ConnectionStatus,
 } from "./useConnectionStatus";
+import { useTheme } from "./useTheme";
 import "./App.css";
 
 type AuthMode = "login" | "register";
@@ -119,6 +121,8 @@ function App() {
   // The options button that opened the dialog; the menu item itself is gone
   // by the time the dialog closes, so focus returns here instead.
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const { theme, setTheme } = useTheme();
 
   const { status: connectionStatus, recheck: recheckConnection } =
     useConnectionStatus(user !== null);
@@ -971,6 +975,8 @@ function App() {
               </ul>
             )}
           </div>
+
+          <ThemeSwitcher theme={theme} onChange={setTheme} />
 
           <div className="sidebar-footer">
             <div className="avatar">

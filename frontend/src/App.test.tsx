@@ -1659,3 +1659,97 @@ describe("Connection status indicator", () => {
     });
 });
 
+
+describe("Theme switcher", () => {
+    function renderWorkspace() {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([]);
+
+        render(<App />);
+    }
+
+    async function themeGroup() {
+        return within(await screen.findByRole("group", { name: "Theme" }));
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+        localStorage.clear();
+        delete document.documentElement.dataset.theme;
+    });
+
+    it("follows the system theme by default", async () => {
+        renderWorkspace();
+
+        const group = await themeGroup();
+
+        expect(group.getByRole("button", { name: "System" })).toHaveAttribute(
+            "aria-pressed",
+            "true",
+        );
+        expect(document.documentElement.dataset.theme).toBeUndefined();
+    });
+
+    it("applies and remembers an explicit choice", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        const group = await themeGroup();
+
+        await user.click(group.getByRole("button", { name: "Dark" }));
+
+        expect(group.getByRole("button", { name: "Dark" })).toHaveAttribute(
+            "aria-pressed",
+            "true",
+        );
+        expect(group.getByRole("button", { name: "System" })).toHaveAttribute(
+            "aria-pressed",
+            "false",
+        );
+        expect(document.documentElement.dataset.theme).toBe("dark");
+        expect(localStorage.getItem("curibot-theme")).toBe("dark");
+
+        await user.click(group.getByRole("button", { name: "Light" }));
+
+        expect(document.documentElement.dataset.theme).toBe("light");
+        expect(localStorage.getItem("curibot-theme")).toBe("light");
+    });
+
+    it("returns to the system theme and forgets the saved choice", async () => {
+        const user = userEvent.setup();
+
+        localStorage.setItem("curibot-theme", "dark");
+        renderWorkspace();
+        const group = await themeGroup();
+
+        expect(group.getByRole("button", { name: "Dark" })).toHaveAttribute(
+            "aria-pressed",
+            "true",
+        );
+
+        await user.click(group.getByRole("button", { name: "System" }));
+
+        expect(document.documentElement.dataset.theme).toBeUndefined();
+        expect(localStorage.getItem("curibot-theme")).toBeNull();
+    });
+
+    it("ignores an unrecognised saved value", async () => {
+        localStorage.setItem("curibot-theme", "sepia");
+        renderWorkspace();
+
+        const group = await themeGroup();
+
+        expect(group.getByRole("button", { name: "System" })).toHaveAttribute(
+            "aria-pressed",
+            "true",
+        );
+    });
+});

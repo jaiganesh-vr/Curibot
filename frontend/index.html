@@ -9,6 +9,18 @@
       content="Curibot is a conversational AI assistant that remembers your conversations."
     />
     <title>Curibot</title>
+    <script>
+      // Apply a saved theme before first paint to avoid a flash of the
+      // other theme. Keep the key in sync with src/useTheme.ts.
+      try {
+        const theme = localStorage.getItem("curibot-theme");
+        if (theme === "light" || theme === "dark") {
+          document.documentElement.dataset.theme = theme;
+        }
+      } catch {
+        // Fall back to the system theme.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
