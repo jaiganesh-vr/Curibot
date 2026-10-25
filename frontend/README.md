@@ -13,6 +13,8 @@ the FastAPI backend in [`../backend`](../backend).
   pace, and rendered as Markdown (tables, code, lists, safe links)
 - Live "Searching the web for …" status when the assistant uses its web
   search tool
+- Long-term memory: a Memory panel to review and forget what the assistant
+  remembers about you across conversations
 - Live backend connection status in the chat header
 - Accessible by default: keyboard focus management, a native modal dialog for
   destructive actions, WCAG AA text contrast, and reduced-motion support
@@ -75,6 +77,7 @@ src/
 │   ├── MarkdownMessage.tsx  # Safe Markdown rendering for replies
 │   ├── Composer.tsx         # Message input and send button
 │   ├── ConfirmDialog.tsx    # Native <dialog> confirmation
+│   ├── MemoryPanel.tsx      # Review and forget remembered facts
 │   ├── ThemeSwitcher.tsx    # System / Light / Dark control
 │   └── …                    # Small presentational pieces
 ├── hooks/

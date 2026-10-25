@@ -29,6 +29,7 @@ services:
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
       WEB_SEARCH_MAX_ROUNDS: ${WEB_SEARCH_MAX_ROUNDS:-3}
+      MEMORY_ENABLED: ${MEMORY_ENABLED:-true}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
