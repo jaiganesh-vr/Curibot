@@ -38,6 +38,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   // True while a conversation's options menu or rename box is open.
   const [listBusy, setListBusy] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // The conversation awaiting delete confirmation, if any.
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(
@@ -104,7 +105,13 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
   // Close the drawer on Escape, unless a menu, rename, or dialog handles it.
   useEffect(() => {
-    if (!sidebarOpen || listBusy || pendingDelete !== null || memoryOpen) {
+    if (
+      !sidebarOpen ||
+      listBusy ||
+      settingsOpen ||
+      memoryOpen ||
+      pendingDelete !== null
+    ) {
       return;
     }
 
@@ -117,7 +124,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     document.addEventListener("keydown", handleKeyDown);
 
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sidebarOpen, listBusy, pendingDelete, memoryOpen]);
+  }, [sidebarOpen, listBusy, settingsOpen, memoryOpen, pendingDelete]);
 
   function closeSidebar(returnFocus: boolean) {
     setSidebarOpen(false);
@@ -232,6 +239,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
         isEmpty={conversationsApi.conversations.length === 0}
         onOpenMemory={() => setMemoryOpen(true)}
         onSignOut={() => onSignOut()}
+        onSettingsOpenChange={setSettingsOpen}
       >
         <ConversationList
           conversations={conversationsApi.conversations}

@@ -54,6 +54,11 @@ vi.mock("./api/client", () => ({
     streamMessage: vi.fn(),
 }));
 
+// Memory, theme, and log out live behind the sidebar's settings button.
+async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole("button", { name: "Settings" }));
+}
+
 describe("App authentication screen", () => {
     beforeEach(() => {
         sessionStorage.clear();
@@ -318,9 +323,8 @@ describe("App authentication screen", () => {
 
         render(<App />);
 
-        await user.click(
-            await screen.findByRole("button", { name: "Log out" }),
-        );
+        await openSettings(user);
+        await user.click(screen.getByRole("button", { name: "Log out" }));
 
         expect(sessionStorage.getItem("access_token")).toBeNull();
 
@@ -1416,6 +1420,17 @@ describe("Mobile conversation drawer", () => {
         expect(toggle).toHaveFocus();
     });
 
+    it("lets Escape close the settings menu before the drawer", async () => {
+        const user = userEvent.setup();
+
+        await renderAndOpenDrawer(user);
+        await openSettings(user);
+        await user.keyboard("{Escape}");
+
+        expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+        expect(sidebar()).toHaveClass("sidebar-open");
+    });
+
     it("lets Escape close an open options menu before the drawer", async () => {
         const user = userEvent.setup();
 
@@ -1575,7 +1590,8 @@ describe("Session restore and expiry", () => {
 
         render(<App />);
 
-        await user.click(await screen.findByRole("button", { name: "Log out" }));
+        await openSettings(user);
+        await user.click(screen.getByRole("button", { name: "Log out" }));
 
         expect(
             screen.getByRole("textbox", { name: "Email address" }),
@@ -1683,6 +1699,7 @@ describe("Theme switcher", () => {
     }
 
     async function themeGroup() {
+        await openSettings(userEvent.setup());
         return within(await screen.findByRole("group", { name: "Theme" }));
     }
 
@@ -1868,7 +1885,8 @@ describe("Memory panel", () => {
     }
 
     async function openPanel(user: ReturnType<typeof userEvent.setup>) {
-        await user.click(await screen.findByRole("button", { name: "Memory" }));
+        await openSettings(user);
+        await user.click(screen.getByRole("button", { name: "Memory" }));
         return screen.getByRole("dialog", { name: "What Curibot remembers" });
     }
 
@@ -1956,7 +1974,8 @@ describe("Memory panel", () => {
 
         renderWorkspace();
         // The 401 signs out at once, so the panel may already be gone.
-        await user.click(await screen.findByRole("button", { name: "Memory" }));
+        await openSettings(user);
+        await user.click(screen.getByRole("button", { name: "Memory" }));
 
         expect(
             await screen.findByRole("heading", { name: "Welcome back" }),
@@ -2009,3 +2028,97 @@ describe("Memory panel", () => {
         finish();
     });
 });
+
+describe("Settings menu", () => {
+    function renderWorkspace() {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([]);
+        vi.mocked(listMemories).mockResolvedValue([]);
+        render(<App />);
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+        localStorage.clear();
+        delete document.documentElement.dataset.theme;
+    });
+
+    it("keeps memory, theme, and log out hidden until opened", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        const toggle = await screen.findByRole("button", { name: "Settings" });
+
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        expect(screen.queryByRole("button", { name: "Memory" })).toBeNull();
+        expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+
+        await user.click(toggle);
+
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByRole("button", { name: "Memory" })).toHaveFocus();
+        expect(screen.getByRole("group", { name: "Theme" })).toBeTruthy();
+        expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
+    });
+
+    it("closes on Escape and returns focus to the settings button", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        await openSettings(user);
+        await user.keyboard("{Escape}");
+
+        const toggle = screen.getByRole("button", { name: "Settings" });
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        expect(toggle).toHaveFocus();
+        expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    });
+
+    it("closes on an outside click", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        await openSettings(user);
+        await user.click(document.body);
+
+        expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    });
+
+    it("stays open while changing the theme", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        await openSettings(user);
+        await user.click(
+            within(screen.getByRole("group", { name: "Theme" })).getByRole(
+                "button",
+                { name: "Dark" },
+            ),
+        );
+
+        expect(document.documentElement.dataset.theme).toBe("dark");
+        expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
+    });
+
+    it("opens the memory panel and closes the menu", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        await openSettings(user);
+        await user.click(screen.getByRole("button", { name: "Memory" }));
+
+        expect(
+            screen.getByRole("dialog", { name: "What Curibot remembers" }),
+        ).toHaveAttribute("open");
+        expect(screen.queryByRole("button", { name: "Log out" })).toBeNull();
+    });
+});
+

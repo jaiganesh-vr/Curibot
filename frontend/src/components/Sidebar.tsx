@@ -1,7 +1,7 @@
 import type { ReactNode, Ref } from "react";
 import type { User } from "../api/client";
 import PlusIcon from "./PlusIcon";
-import ThemeSwitcher from "./ThemeSwitcher";
+import SettingsMenu from "./SettingsMenu";
 
 interface SidebarProps {
   user: User;
@@ -16,6 +16,7 @@ interface SidebarProps {
   isEmpty: boolean;
   onOpenMemory: () => void;
   onSignOut: () => void;
+  onSettingsOpenChange: (open: boolean) => void;
   // The conversation list.
   children: ReactNode;
 }
@@ -32,6 +33,7 @@ function Sidebar({
   isEmpty,
   onOpenMemory,
   onSignOut,
+  onSettingsOpenChange,
   children,
 }: SidebarProps) {
   return (
@@ -89,24 +91,6 @@ function Sidebar({
           )}
         </div>
 
-        <button className="memory-button" type="button" onClick={onOpenMemory}>
-          <svg
-            className="memory-icon"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M4 2.5h8a.5.5 0 0 1 .5.5v10.5L8 11l-4.5 2.5V3a.5.5 0 0 1 .5-.5Z" />
-          </svg>
-          Memory
-        </button>
-
-        <ThemeSwitcher />
-
         <div className="sidebar-footer">
           <div className="avatar">{user.email.charAt(0).toUpperCase()}</div>
 
@@ -115,9 +99,11 @@ function Sidebar({
             <span className="user-status">Signed in</span>
           </div>
 
-          <button className="logout-button" type="button" onClick={onSignOut}>
-            Log out
-          </button>
+          <SettingsMenu
+            onOpenMemory={onOpenMemory}
+            onSignOut={onSignOut}
+            onOpenChange={onSettingsOpenChange}
+          />
         </div>
       </aside>
     </>
