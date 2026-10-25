@@ -564,3 +564,26 @@ def test_rename_unknown_conversation_returns_404() -> None:
     )
 
     assert response.status_code == 404
+
+
+def test_rename_rejects_titles_over_100_characters() -> None:
+    _, headers = create_authenticated_user("rename-long@example.com")
+    conversation_id = client.post(
+        "/api/v1/conversations",
+        json={},
+        headers=headers,
+    ).json()["id"]
+
+    at_limit = client.patch(
+        f"/api/v1/conversations/{conversation_id}",
+        json={"title": "t" * 100},
+        headers=headers,
+    )
+    too_long = client.patch(
+        f"/api/v1/conversations/{conversation_id}",
+        json={"title": "t" * 101},
+        headers=headers,
+    )
+
+    assert at_limit.status_code == 200
+    assert too_long.status_code == 422

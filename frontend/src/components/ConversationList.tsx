@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Conversation } from "../api/client";
+import { TITLE_INPUT_MAX_LENGTH } from "../lib/titles";
 
 interface ConversationListProps {
   conversations: Conversation[];
@@ -121,7 +122,7 @@ function ConversationList({
                 <input
                   aria-label="Conversation title"
                   value={renameDraft}
-                  maxLength={200}
+                  maxLength={TITLE_INPUT_MAX_LENGTH}
                   autoFocus
                   onFocus={(event) => event.currentTarget.select()}
                   onChange={(event) => setRenameDraft(event.target.value)}

@@ -106,7 +106,8 @@ def test_first_message_sets_title_and_updates_activity(
     )
     db_session.refresh(conversation)
 
-    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:60]
+    # No space in the second half of the limit, so it is a hard cut.
+    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:49] + "…"
     assert conversation.updated_at == assistant_message.created_at
 
     send_message(
@@ -118,7 +119,8 @@ def test_first_message_sets_title_and_updates_activity(
     )
     db_session.refresh(conversation)
 
-    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:60]
+    # No space in the second half of the limit, so it is a hard cut.
+    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:49] + "…"
 
 
 def test_send_message_includes_prior_history(
@@ -750,7 +752,16 @@ def test_stream_message_failure_persists_nothing(db_session: Session) -> None:
     [
         ("Hello", "Hello"),
         ("  Plan a   trip\nto Japan\t", "Plan a trip to Japan"),
-        ("x" * 80, "x" * 60),
+        ("x" * 80, "x" * 49 + "…"),
+        (
+            "Can you explain how transformers work in large language models?",
+            "Can you explain how transformers work in large…",
+        ),
+        (
+            "Compare Python, JavaScript, and Rust for building a web backend",
+            "Compare Python, JavaScript, and Rust for…",
+        ),
+        ("a" * 50, "a" * 50),
         ("   \n\t ", None),
     ],
 )

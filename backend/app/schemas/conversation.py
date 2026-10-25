@@ -4,15 +4,22 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+# Titles users type are capped here; the column itself allows 200.
+TITLE_INPUT_MAX_LENGTH = 100
+
 
 class ConversationCreateRequest(BaseModel):
-    title: str | None = Field(default=None, max_length=200)
+    title: str | None = Field(default=None, max_length=TITLE_INPUT_MAX_LENGTH)
 
 
 class ConversationUpdateRequest(BaseModel):
     title: Annotated[
         str,
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=TITLE_INPUT_MAX_LENGTH,
+        ),
     ]
 
 

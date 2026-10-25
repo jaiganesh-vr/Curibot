@@ -24,7 +24,9 @@ from app.services.chat_graph import build_chat_graph
 
 logger = logging.getLogger(__name__)
 
-TITLE_MAX_LENGTH = 60
+# Automatic titles from the first message; renamed titles may be longer.
+TITLE_MAX_LENGTH = 50
+TITLE_ELLIPSIS = "…"
 
 
 class ConversationNotFoundError(Exception):
@@ -54,9 +56,22 @@ StreamEvent = TokenEvent | CompletedEvent
 
 
 def derive_title(content: str) -> str | None:
-    """Build a conversation title from the first user message."""
-    title = " ".join(content.split())[:TITLE_MAX_LENGTH]
-    return title or None
+    """Build a conversation title from the first user message.
+
+    Whitespace is collapsed. Longer messages are cut at a word boundary,
+    when one falls in the second half of the limit, and end in an ellipsis.
+    """
+    text = " ".join(content.split())
+
+    if len(text) <= TITLE_MAX_LENGTH:
+        return text or None
+
+    cut = text[: TITLE_MAX_LENGTH - len(TITLE_ELLIPSIS)]
+    word_end = cut.rfind(" ")
+    if word_end >= TITLE_MAX_LENGTH // 2:
+        cut = cut[:word_end]
+
+    return cut.rstrip(" ,.;:-") + TITLE_ELLIPSIS
 
 
 def create_conversation(

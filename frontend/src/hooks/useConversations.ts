@@ -8,6 +8,7 @@ import {
   type Conversation,
 } from "../api/client";
 import { getStoredToken } from "../lib/session";
+import { deriveTitle } from "../lib/titles";
 
 // Reports a failed request. Returns true if the session expired and the user
 // is being signed out, in which case the caller should stop.
@@ -167,9 +168,7 @@ export function useConversations({
           conversation.id === conversationId
             ? {
                 ...conversation,
-                title:
-                  conversation.title ??
-                  content.replace(/\s+/g, " ").slice(0, 60),
+                title: conversation.title ?? deriveTitle(content),
                 updated_at: turn.assistant_message.created_at,
               }
             : conversation,
