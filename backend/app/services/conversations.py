@@ -20,6 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.core.logging import bind_context
 from app.models import Conversation, Message, User
 from app.services.chat_graph import build_chat_graph, is_conversational
 from app.services.memory_tools import MemoryAccess
@@ -190,6 +191,7 @@ def _prepare_turn(
     checkpointer: BaseCheckpointSaver[str] | None,
 ) -> _PreparedTurn:
     """Lock the conversation and build the graph input for a new user turn."""
+    bind_context(conversation_id=conversation_id)
     conversation = db.scalar(
         select(Conversation)
         .where(

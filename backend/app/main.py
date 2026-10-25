@@ -14,6 +14,7 @@ from app.api.routes.conversations import router as conversations_router
 from app.api.routes.memories import router as memories_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.core.middleware import REQUEST_ID_HEADER, RequestContextMiddleware
 from app.db.session import check_database_connection
 
 # Concurrent chat turns each borrow a checkpoint connection.
@@ -61,8 +62,11 @@ app.add_middleware(
     allow_origins=get_settings().cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", REQUEST_ID_HEADER],
+    expose_headers=[REQUEST_ID_HEADER],
 )
+# Added last so it wraps everything, including CORS and error responses.
+app.add_middleware(RequestContextMiddleware)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")

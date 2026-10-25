@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import bind_context
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models import User
@@ -42,6 +43,7 @@ def get_current_user(
     if user is None or not user.is_active:
         raise unauthorized
 
+    bind_context(user_id=user.id)
     return user
 
 
