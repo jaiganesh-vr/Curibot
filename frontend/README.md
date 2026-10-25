@@ -11,6 +11,8 @@ the FastAPI backend in [`../backend`](../backend).
   screens
 - Assistant replies streamed over Server-Sent Events, revealed at a steady
   pace, and rendered as Markdown (tables, code, lists, safe links)
+- Live "Searching the web for …" status when the assistant uses its web
+  search tool
 - Live backend connection status in the chat header
 - Accessible by default: keyboard focus management, a native modal dialog for
   destructive actions, WCAG AA text contrast, and reduced-motion support
