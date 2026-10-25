@@ -30,6 +30,12 @@ services:
       WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
       WEB_SEARCH_MAX_ROUNDS: ${WEB_SEARCH_MAX_ROUNDS:-3}
       MEMORY_ENABLED: ${MEMORY_ENABLED:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      # Optional LangSmith tracing. Traces include message content.
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-curibot}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
