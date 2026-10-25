@@ -65,11 +65,15 @@ function App() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  // The sidebar is an off-canvas drawer on small screens.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const chatContentRef = useRef<HTMLDivElement>(null);
   // Lets an in-flight stream check which conversation is open when it ends.
   const selectedConversationIdRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
   // Latest pending turn for handlers that run after an await.
   const pendingTurnRef = useRef<PendingTurn | null>(null);
   // Enter, Escape, and blur can all end a rename; only the first one counts.
@@ -269,6 +273,30 @@ function App() {
     }
   }, []);
 
+  // Move focus into the drawer when it opens.
+  useEffect(() => {
+    if (sidebarOpen) {
+      sidebarCloseRef.current?.focus();
+    }
+  }, [sidebarOpen]);
+
+  // Close the drawer on Escape, unless a menu or rename handles it first.
+  useEffect(() => {
+    if (!sidebarOpen || openMenuId !== null || renamingId !== null) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeSidebar(true);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [sidebarOpen, openMenuId, renamingId]);
+
   // Close the conversation options menu on an outside click or Escape.
   useEffect(() => {
     if (openMenuId === null) {
@@ -357,6 +385,7 @@ function App() {
       ]);
 
       dropFinishedPendingTurn();
+      closeSidebar(false);
       setMessages([]);
       setComposer("");
       setSelectedConversationId(conversation.id);
@@ -462,8 +491,17 @@ function App() {
     }
   }
 
+  function closeSidebar(returnFocus: boolean) {
+    setSidebarOpen(false);
+
+    if (returnFocus) {
+      sidebarToggleRef.current?.focus();
+    }
+  }
+
   function handleSelectConversation(conversationId: string) {
     setOpenMenuId(null);
+    closeSidebar(false);
 
     if (conversationId === selectedConversationId) {
       return;
@@ -616,16 +654,38 @@ function App() {
     setPendingTurn(null);
     setOpenMenuId(null);
     setRenamingId(null);
+    setSidebarOpen(false);
     setMode("login");
   }
 
   if (user) {
     return (
       <main className="app-shell">
-        <aside className="sidebar">
+        {sidebarOpen && (
+          <div
+            className="sidebar-backdrop"
+            aria-hidden="true"
+            onClick={() => closeSidebar(true)}
+          />
+        )}
+
+        <aside
+          id="sidebar"
+          className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}
+          aria-label="Conversations"
+        >
           <div className="sidebar-header">
             <div className="brand-mark">C</div>
             <span className="brand-name">Curibot</span>
+            <button
+              ref={sidebarCloseRef}
+              className="sidebar-close"
+              type="button"
+              aria-label="Close conversations"
+              onClick={() => closeSidebar(true)}
+            >
+              ×
+            </button>
           </div>
 
           <button
@@ -793,7 +853,21 @@ function App() {
 
         <section className="chat-panel">
           <header className="chat-header">
-            <div>
+            <button
+              ref={sidebarToggleRef}
+              className="sidebar-toggle"
+              type="button"
+              aria-label="Open conversations"
+              aria-controls="sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(true)}
+            >
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+            </button>
+
+            <div className="chat-header-title">
               <p className="header-eyebrow">YOUR AI WORKSPACE</p>
               <h1>
                 {selectedConversation?.title || "Curibot"}

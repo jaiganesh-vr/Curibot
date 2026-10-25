@@ -1194,3 +1194,120 @@ describe("Conversation rename on blur", () => {
         ).toBeTruthy();
     });
 });
+
+describe("Mobile conversation drawer", () => {
+    const conversations: Conversation[] = [
+        {
+            id: "conversation-1",
+            title: "First chat",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-02T00:00:00Z",
+        },
+        {
+            id: "conversation-2",
+            title: "Second chat",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+        },
+    ];
+
+    async function renderAndOpenDrawer(
+        user: ReturnType<typeof userEvent.setup>,
+    ) {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue(conversations);
+        vi.mocked(listMessages).mockResolvedValue([]);
+
+        render(<App />);
+
+        const toggle = await screen.findByRole("button", {
+            name: "Open conversations",
+        });
+        await user.click(toggle);
+
+        return toggle;
+    }
+
+    function sidebar() {
+        return screen.getByRole("complementary", { name: "Conversations" });
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("opens the drawer and moves focus to its close button", async () => {
+        const user = userEvent.setup();
+
+        const toggle = await renderAndOpenDrawer(user);
+
+        expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(toggle).toHaveAttribute("aria-controls", "sidebar");
+        expect(sidebar()).toHaveClass("sidebar-open");
+        expect(
+            screen.getByRole("button", { name: "Close conversations" }),
+        ).toHaveFocus();
+    });
+
+    it("closes after choosing a conversation and focuses the composer", async () => {
+        const user = userEvent.setup();
+
+        const toggle = await renderAndOpenDrawer(user);
+        await user.click(screen.getByRole("button", { name: "Second chat" }));
+
+        expect(sidebar()).not.toHaveClass("sidebar-open");
+        expect(toggle).toHaveAttribute("aria-expanded", "false");
+        expect(
+            await screen.findByRole("textbox", { name: "Message" }),
+        ).toHaveFocus();
+    });
+
+    it("closes on Escape and returns focus to the menu button", async () => {
+        const user = userEvent.setup();
+
+        const toggle = await renderAndOpenDrawer(user);
+        await user.keyboard("{Escape}");
+
+        expect(sidebar()).not.toHaveClass("sidebar-open");
+        expect(toggle).toHaveFocus();
+    });
+
+    it("closes from the backdrop and the close button", async () => {
+        const user = userEvent.setup();
+
+        const toggle = await renderAndOpenDrawer(user);
+        const backdrop = document.querySelector(".sidebar-backdrop");
+        expect(backdrop).toBeTruthy();
+        await user.click(backdrop as Element);
+        expect(sidebar()).not.toHaveClass("sidebar-open");
+        expect(document.querySelector(".sidebar-backdrop")).toBeNull();
+
+        await user.click(toggle);
+        await user.click(
+            screen.getByRole("button", { name: "Close conversations" }),
+        );
+        expect(sidebar()).not.toHaveClass("sidebar-open");
+        expect(toggle).toHaveFocus();
+    });
+
+    it("lets Escape close an open options menu before the drawer", async () => {
+        const user = userEvent.setup();
+
+        await renderAndOpenDrawer(user);
+        await user.click(
+            screen.getByRole("button", { name: "Options for First chat" }),
+        );
+        await user.keyboard("{Escape}");
+
+        expect(screen.queryByRole("menu")).toBeNull();
+        expect(sidebar()).toHaveClass("sidebar-open");
+    });
+});
