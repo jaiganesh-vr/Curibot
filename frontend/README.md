@@ -1,73 +1,68 @@
-# React + TypeScript + Vite
+# Curibot frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The React client for Curibot, a stateful conversational AI agent. It talks to
+the FastAPI backend in [`../backend`](../backend).
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Sign in and registration, with session restore on refresh and automatic
+  sign-out when a session expires
+- Conversation sidebar with rename and delete; a slide-in drawer on small
+  screens
+- Assistant replies streamed over Server-Sent Events, revealed at a steady
+  pace, and rendered as Markdown (tables, code, lists, safe links)
+- Live backend connection status in the chat header
+- Accessible by default: keyboard focus management, a native modal dialog for
+  destructive actions, WCAG AA text contrast, and reduced-motion support
 
-## React Compiler
+## Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+React 19, TypeScript, Vite, plain CSS, `react-markdown` with `remark-gfm`, and
+Vitest with Testing Library.
 
-## Expanding the ESLint configuration
+## Getting started
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Requires Node.js 24 and a running backend (see the root `compose.yaml`).
 
-```js
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+The app runs at <http://localhost:5173>.
 
-```js
-// eslint.config.js
-import reactX from "eslint-plugin-react-x";
-import reactDom from "eslint-plugin-react-dom";
+### Configuration
 
-export default defineConfig([
-  globalIgnores(["dist"]),
-  {
-    files: ["**/*.{ts,tsx}"],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs["recommended-typescript"],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-]);
+The API address comes from `VITE_API_BASE_URL`. Create
+`.env.development` (Git-ignored) to override the default:
+
+```bash
+VITE_API_BASE_URL=http://localhost:8000/api/v1
+```
+
+## Scripts
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the dev server with hot reload |
+| `npm run build` | Type-check and build for production into `dist/` |
+| `npm run preview` | Serve the production build locally |
+| `npm test -- --run` | Run the test suite once (`npm test` watches) |
+| `npm run lint` | Lint with ESLint |
+| `npm run typecheck` | Type-check without emitting |
+| `npm run format` | Format with Prettier |
+
+## Project layout
+
+```text
+src/
+├── App.tsx                 # Workspace and auth screens, app state
+├── App.css                 # Component styles
+├── index.css               # Global styles and colour tokens
+├── api/client.ts           # REST client and SSE stream parser
+├── ConfirmDialog.tsx       # Native <dialog> confirmation
+├── MarkdownMessage.tsx     # Safe Markdown rendering for replies
+├── StreamingReply.tsx      # Paced reveal of a streaming reply
+├── useConnectionStatus.ts  # Backend health polling
+└── test/setup.ts           # Test environment shims
 ```
