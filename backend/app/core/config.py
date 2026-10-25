@@ -20,6 +20,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     app_env: Literal["development", "test", "production"] = "development"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # "json" for log aggregation (the Docker default), "text" for local reading.
+    log_format: Literal["json", "text"] = "text"
     database_url: str | None = None
     postgres_password: SecretStr | None = None
     jwt_secret_key: SecretStr | None = None

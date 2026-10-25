@@ -13,6 +13,7 @@ from app.api.routes.auth import router as auth_router
 from app.api.routes.conversations import router as conversations_router
 from app.api.routes.memories import router as memories_router
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.session import check_database_connection
 
 # Concurrent chat turns each borrow a checkpoint connection.
@@ -46,6 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.checkpointer = checkpointer
         yield
 
+
+configure_logging(get_settings().log_level, get_settings().log_format)
 
 app = FastAPI(
     title="Stateful Conversation Agent",
