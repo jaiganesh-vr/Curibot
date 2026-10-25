@@ -32,6 +32,12 @@ services:
   frontend:
     build:
       context: ./frontend
+    # Serve the live source so edits hot-reload instead of needing a rebuild.
+    # The anonymous volume keeps the image's Linux node_modules, since the
+    # host's may contain macOS builds of native tools.
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     ports:
       - "127.0.0.1:5173:5173"
     depends_on:

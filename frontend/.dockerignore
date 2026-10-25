@@ -1,0 +1,3 @@
+# Dependencies are installed inside the image; build output is not needed.
+node_modules
+dist
