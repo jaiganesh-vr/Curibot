@@ -54,6 +54,24 @@ interface PendingTurn {
 // Follow streaming text only while the reader is already near the bottom.
 const STICK_TO_BOTTOM_THRESHOLD_PX = 160;
 
+function PlusIcon() {
+  return (
+    <svg
+      className="new-chat-icon"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path
+        d="M8 3v10M3 8h10"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function getStoredToken(): string | null {
   return sessionStorage.getItem("access_token");
 }
@@ -778,8 +796,8 @@ function App() {
             onClick={() => void handleNewChat()}
             disabled={creatingConversation}
           >
-            <span aria-hidden="true">+</span>
-            {creatingConversation ? "Creating..." : "New Chat"}
+            <PlusIcon />
+            {creatingConversation ? "Creating…" : "New chat"}
           </button>
 
           <div className="sidebar-section">
@@ -990,10 +1008,8 @@ function App() {
                   onClick={() => void handleNewChat()}
                   disabled={creatingConversation}
                 >
-                  <span aria-hidden="true">+</span>
-                  {creatingConversation
-                    ? "Creating..."
-                    : "Start a new chat"}
+                  <PlusIcon />
+                  {creatingConversation ? "Creating…" : "Start a new chat"}
                 </button>
               </div>
             ) : (
@@ -1227,7 +1243,7 @@ function App() {
         </form>
 
         <p className="auth-footnote">
-          Secure authentication powered by your FastAPI backend.
+          Your conversations are saved privately to your account.
         </p>
       </section>
     </main>

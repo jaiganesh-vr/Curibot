@@ -345,7 +345,7 @@ describe("App authentication screen", () => {
         render(<App />);
 
         await user.click(
-            await screen.findByRole("button", { name: "New Chat" }),
+            await screen.findByRole("button", { name: "New chat" }),
         );
 
         await waitFor(() => {
@@ -1440,7 +1440,7 @@ describe("Session restore and expiry", () => {
         render(<App />);
 
         await user.click(
-            await screen.findByRole("button", { name: "New Chat" }),
+            await screen.findByRole("button", { name: "New chat" }),
         );
 
         expect(await screen.findByRole("alert")).toHaveTextContent(
