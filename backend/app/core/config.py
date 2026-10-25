@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=30, gt=0)
     groq_api_key: SecretStr | None = None
     groq_model: str = "openai/gpt-oss-120b"
+    # Approximate tokens of conversation history sent to the model per turn;
+    # older messages are left out. Keep well below the model's context window
+    # to leave room for the system prompt and the reply.
+    context_max_tokens: int = Field(default=16_000, ge=1_000)
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
