@@ -56,7 +56,10 @@ def test_message_schema() -> None:
 def test_relationships_are_configured() -> None:
     configure_mappers()
 
-    assert list(User.__mapper__.relationships.keys()) == ["conversations"]
+    assert list(User.__mapper__.relationships.keys()) == [
+        "conversations",
+        "memories",
+    ]
     assert list(Conversation.__mapper__.relationships.keys()) == [
         "user",
         "messages",
@@ -64,4 +67,5 @@ def test_relationships_are_configured() -> None:
     assert list(Message.__mapper__.relationships.keys()) == ["conversation"]
 
     assert User.__mapper__.relationships["conversations"].cascade.delete_orphan
+    assert User.__mapper__.relationships["memories"].cascade.delete_orphan
     assert Conversation.__mapper__.relationships["messages"].cascade.delete_orphan
