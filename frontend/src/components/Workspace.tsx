@@ -9,6 +9,7 @@ import ChatHeader from "./ChatHeader";
 import Composer from "./Composer";
 import ConfirmDialog from "./ConfirmDialog";
 import ConversationList from "./ConversationList";
+import MemoryPanel from "./MemoryPanel";
 import MessageList from "./MessageList";
 import Sidebar from "./Sidebar";
 import WelcomeScreen from "./WelcomeScreen";
@@ -36,6 +37,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // True while a conversation's options menu or rename box is open.
   const [listBusy, setListBusy] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
 
   // The conversation awaiting delete confirmation, if any.
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(
@@ -102,7 +104,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
   // Close the drawer on Escape, unless a menu, rename, or dialog handles it.
   useEffect(() => {
-    if (!sidebarOpen || listBusy || pendingDelete !== null) {
+    if (!sidebarOpen || listBusy || pendingDelete !== null || memoryOpen) {
       return;
     }
 
@@ -115,7 +117,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     document.addEventListener("keydown", handleKeyDown);
 
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sidebarOpen, listBusy, pendingDelete]);
+  }, [sidebarOpen, listBusy, pendingDelete, memoryOpen]);
 
   function closeSidebar(returnFocus: boolean) {
     setSidebarOpen(false);
@@ -228,6 +230,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
         error={chatError}
         loading={conversationsApi.loading}
         isEmpty={conversationsApi.conversations.length === 0}
+        onOpenMemory={() => setMemoryOpen(true)}
         onSignOut={() => onSignOut()}
       >
         <ConversationList
@@ -279,6 +282,12 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
           />
         )}
       </section>
+
+      <MemoryPanel
+        open={memoryOpen}
+        onClose={() => setMemoryOpen(false)}
+        onSessionExpired={() => onSignOut(SESSION_EXPIRED_NOTICE)}
+      />
 
       <ConfirmDialog
         open={pendingDelete !== null}

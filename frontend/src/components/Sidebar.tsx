@@ -14,6 +14,7 @@ interface SidebarProps {
   error: string;
   loading: boolean;
   isEmpty: boolean;
+  onOpenMemory: () => void;
   onSignOut: () => void;
   // The conversation list.
   children: ReactNode;
@@ -29,6 +30,7 @@ function Sidebar({
   error,
   loading,
   isEmpty,
+  onOpenMemory,
   onSignOut,
   children,
 }: SidebarProps) {
@@ -86,6 +88,22 @@ function Sidebar({
             children
           )}
         </div>
+
+        <button className="memory-button" type="button" onClick={onOpenMemory}>
+          <svg
+            className="memory-icon"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M4 2.5h8a.5.5 0 0 1 .5.5v10.5L8 11l-4.5 2.5V3a.5.5 0 0 1 .5-.5Z" />
+          </svg>
+          Memory
+        </button>
 
         <ThemeSwitcher />
 

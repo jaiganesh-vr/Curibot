@@ -12,10 +12,13 @@ import { ApiError } from "./api/client";
 import userEvent from "@testing-library/user-event";
 import {
     checkHealth,
+    clearMemories,
     createConversation,
     deleteConversation,
+    deleteMemory,
     getMe,
     listConversations,
+    listMemories,
     listMessages,
     login,
     register,
@@ -37,10 +40,13 @@ vi.mock("./api/client", () => ({
     },
     // Tests must never reach a real backend for the health indicator.
     checkHealth: vi.fn(async () => "online"),
+    clearMemories: vi.fn(),
     createConversation: vi.fn(),
     deleteConversation: vi.fn(),
+    deleteMemory: vi.fn(),
     getMe: vi.fn(),
     listConversations: vi.fn(),
+    listMemories: vi.fn(),
     listMessages: vi.fn(),
     login: vi.fn(),
     register: vi.fn(),
@@ -1840,5 +1846,166 @@ describe("Web search activity", () => {
         expect(
             screen.queryByText("Searching the web for “Chennai weather”…"),
         ).toBeNull();
+    });
+});
+
+describe("Memory panel", () => {
+    const memories = [
+        { id: "m1", content: "Name is Jaiganesh", created_at: "2026-01-01T00:00:00Z" },
+        { id: "m2", content: "Prefers Python", created_at: "2026-01-01T00:00:01Z" },
+    ];
+
+    function renderWorkspace() {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([]);
+        render(<App />);
+    }
+
+    async function openPanel(user: ReturnType<typeof userEvent.setup>) {
+        await user.click(await screen.findByRole("button", { name: "Memory" }));
+        return screen.getByRole("dialog", { name: "What Curibot remembers" });
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("lists what Curibot remembers and focuses the close button", async () => {
+        const user = userEvent.setup();
+        vi.mocked(listMemories).mockResolvedValue(memories);
+
+        renderWorkspace();
+        const dialog = await openPanel(user);
+
+        expect(await within(dialog).findByText("Name is Jaiganesh")).toBeTruthy();
+        expect(within(dialog).getByText("Prefers Python")).toBeTruthy();
+        expect(listMemories).toHaveBeenCalledWith("test-access-token");
+        expect(
+            within(dialog).getByRole("button", { name: "Close memory" }),
+        ).toHaveFocus();
+    });
+
+    it("shows an empty state", async () => {
+        const user = userEvent.setup();
+        vi.mocked(listMemories).mockResolvedValue([]);
+
+        renderWorkspace();
+        const dialog = await openPanel(user);
+
+        expect(
+            await within(dialog).findByText("Curibot hasn't remembered anything yet."),
+        ).toBeTruthy();
+        expect(within(dialog).queryByRole("button", { name: "Clear all…" })).toBeNull();
+    });
+
+    it("forgets a single memory", async () => {
+        const user = userEvent.setup();
+        vi.mocked(listMemories).mockResolvedValue(memories);
+        vi.mocked(deleteMemory).mockResolvedValue(undefined);
+
+        renderWorkspace();
+        const dialog = await openPanel(user);
+        await user.click(
+            await within(dialog).findByRole("button", {
+                name: "Forget “Prefers Python”",
+            }),
+        );
+
+        expect(deleteMemory).toHaveBeenCalledWith("test-access-token", "m2");
+        await waitFor(() => {
+            expect(within(dialog).queryByText("Prefers Python")).toBeNull();
+        });
+        expect(within(dialog).getByText("Name is Jaiganesh")).toBeTruthy();
+    });
+
+    it("clears all memories only after confirming", async () => {
+        const user = userEvent.setup();
+        vi.mocked(listMemories).mockResolvedValue(memories);
+        vi.mocked(clearMemories).mockResolvedValue(undefined);
+
+        renderWorkspace();
+        const dialog = await openPanel(user);
+        await user.click(
+            await within(dialog).findByRole("button", { name: "Clear all…" }),
+        );
+
+        expect(within(dialog).getByText("Forget all 2 memories?")).toBeTruthy();
+        expect(clearMemories).not.toHaveBeenCalled();
+
+        await user.click(within(dialog).getByRole("button", { name: "Clear all" }));
+
+        expect(clearMemories).toHaveBeenCalledWith("test-access-token");
+        expect(
+            await within(dialog).findByText("Curibot hasn't remembered anything yet."),
+        ).toBeTruthy();
+    });
+
+    it("signs out when the session has expired", async () => {
+        const user = userEvent.setup();
+        vi.mocked(listMemories).mockRejectedValue(
+            new ApiError("Invalid or expired authentication credentials.", 401),
+        );
+
+        renderWorkspace();
+        // The 401 signs out at once, so the panel may already be gone.
+        await user.click(await screen.findByRole("button", { name: "Memory" }));
+
+        expect(
+            await screen.findByRole("heading", { name: "Welcome back" }),
+        ).toBeTruthy();
+        expect(sessionStorage.getItem("access_token")).toBeNull();
+    });
+
+    it("shows when Curibot is saving a memory", async () => {
+        const user = userEvent.setup();
+        let finish: () => void = () => {};
+
+        vi.mocked(listConversations).mockResolvedValue([]);
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([
+            {
+                id: "conversation-1",
+                title: "Intro",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+            },
+        ]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+        vi.mocked(streamMessage).mockImplementation(
+            async (_token, _id, _content, _onToken, onToolCall) => {
+                onToolCall?.({ name: "save_memory", query: "Prefers Python" });
+                await new Promise<void>((resolve) => {
+                    finish = resolve;
+                });
+                throw new Error("stop here");
+            },
+        );
+
+        render(<App />);
+        await user.click(await screen.findByRole("button", { name: "Intro" }));
+        await user.type(
+            await screen.findByRole("textbox", { name: "Message" }),
+            "I prefer Python",
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+
+        expect(
+            await screen.findByText("Remembering “Prefers Python”…"),
+        ).toBeTruthy();
+        finish();
     });
 });

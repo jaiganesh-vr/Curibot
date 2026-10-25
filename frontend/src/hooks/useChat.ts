@@ -13,9 +13,16 @@ import type { ReportError } from "./useConversations";
 export type SendResult = "sent" | "failed" | "signed-out";
 
 function describeToolCall(call: ToolCall): string {
-  return call.name === "web_search"
-    ? `Searching the web for “${call.query}”…`
-    : `Using ${call.name}…`;
+  switch (call.name) {
+    case "web_search":
+      return `Searching the web for “${call.query}”…`;
+    case "save_memory":
+      return `Remembering “${call.query}”…`;
+    case "delete_memory":
+      return "Updating memory…";
+    default:
+      return `Using ${call.name}…`;
+  }
 }
 
 interface UseChatOptions {

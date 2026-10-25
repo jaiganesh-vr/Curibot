@@ -185,6 +185,29 @@ export function deleteConversation(
     );
 }
 
+// A lasting fact the assistant remembers about the user.
+export interface Memory {
+    id: string;
+    content: string;
+    created_at: string;
+}
+
+export function listMemories(token: string): Promise<Memory[]> {
+    return request<Memory[]>("/memories", {}, token);
+}
+
+export function deleteMemory(token: string, memoryId: string): Promise<void> {
+    return request<void>(
+        `/memories/${encodeURIComponent(memoryId)}`,
+        { method: "DELETE" },
+        token,
+    );
+}
+
+export function clearMemories(token: string): Promise<void> {
+    return request<void>("/memories", { method: "DELETE" }, token);
+}
+
 export function sendMessage(
     token: string,
     conversationId: string,

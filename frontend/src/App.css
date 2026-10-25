@@ -300,6 +300,36 @@
   }
 }
 
+/* Opens the memory panel; sits above the theme switcher. */
+.memory-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 8px;
+  padding: 7px 10px;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.memory-button:hover {
+  color: var(--color-text);
+  background: var(--color-tint-hover);
+}
+
+.memory-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+
 /* A compact segmented control for System / Light / Dark. */
 .theme-switcher {
   display: grid;
@@ -1345,6 +1375,141 @@
 .dialog-button-danger:hover:not(:disabled) {
   background: var(--color-danger-hover);
   border-color: var(--color-danger-hover);
+}
+
+/* --- Memory panel --- */
+
+.memory-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-width: none;
+  max-height: min(640px, calc(100% - 64px));
+  padding: 0;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 25%);
+}
+
+.memory-dialog[open] {
+  animation: dialog-enter 160ms ease-out;
+}
+
+.memory-dialog::backdrop {
+  background: rgb(15 23 42 / 40%);
+}
+
+/* Padding lives here so clicks inside never count as backdrop clicks. */
+.memory-dialog-body {
+  padding: 22px 24px 24px;
+}
+
+.memory-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+.memory-close {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.memory-close:hover {
+  color: var(--color-text);
+  background: var(--color-tint-active);
+}
+
+.memory-intro,
+.memory-empty {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.memory-empty {
+  margin-top: 20px;
+}
+
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-list > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 8px 10px 12px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  list-style: none;
+}
+
+.memory-list > li > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-forget {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
+  color: var(--color-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.memory-forget:hover:not(:disabled) {
+  color: var(--color-danger-text);
+  background: var(--color-danger-soft);
+}
+
+.memory-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.memory-confirm-text {
+  margin-right: auto;
+  color: var(--color-muted);
+  font-size: 13px;
 }
 
 /* --- Accessibility --- */
