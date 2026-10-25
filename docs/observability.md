@@ -76,6 +76,24 @@ LANGSMITH_PROJECT=curibot
 
 Then rebuild the backend: `docker compose up -d --build backend`.
 
+### Finding a trace from a log line
+
+Each chat turn is traced as a run named **`chat_turn`**, tagged with
+`curibot` plus `web_search` and/or `memory` when those features are on,
+and carrying the same IDs as the logs as metadata:
+
+| Metadata | Matches the log field |
+| --- | --- |
+| `request_id` | `request_id` (also the `X-Request-ID` response header) |
+| `conversation_id` | `conversation_id` |
+| `user_id` | `user_id` |
+| `streamed` | `streamed` |
+
+To investigate a `turn_failed` or slow `turn_completed` line, copy its
+`request_id`, open the project in LangSmith, and filter runs by
+**Metadata → `request_id`**. The trace shows every model input and output
+and every tool call in that turn.
+
 Unlike the logs, **traces include full message content**, so tracing is
 off by default. Enable it for development and debugging, not for real
 users' data unless they have agreed to it.

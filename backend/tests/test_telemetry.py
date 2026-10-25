@@ -1,13 +1,20 @@
 """Agent turn telemetry and the guarantee that logs never contain content."""
 
 import logging
+from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.logging import ContextFilter, JsonFormatter
+from app.core.logging import (
+    ContextFilter,
+    JsonFormatter,
+    bind_context,
+    end_request_context,
+    start_request_context,
+)
 from app.services.chat_graph import build_chat_graph
 from app.services.conversations import (
     ChatGenerationError,
@@ -191,3 +198,41 @@ def test_logs_never_contain_message_query_or_memory_content(
 
     assert any("turn_completed" in line for line in rendered)
     assert all(SECRET not in line for line in rendered)
+
+
+def test_runs_are_named_tagged_and_linked_to_the_request(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
+    received: dict[str, Any] = {}
+
+    class RecordingGraph:
+        def stream(self, state, config=None, stream_mode=None):  # type: ignore[no-untyped-def]
+            received.update(config or {})
+            yield "updates", {"call_model": {"messages": [AIMessage("Hi")]}}
+
+    monkeypatch.setattr(
+        "app.services.conversations.build_chat_graph",
+        lambda **kwargs: RecordingGraph(),
+    )
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    get_settings.cache_clear()
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    token = start_request_context("req-trace-1")
+    bind_context(user_id=user.id)
+    try:
+        list(stream_message(db_session, user, conversation.id, "Hello"))
+    finally:
+        end_request_context(token)
+
+    assert received["run_name"] == "chat_turn"
+    assert received["tags"] == ["curibot", "memory"]
+    assert received["metadata"] == {
+        "request_id": "req-trace-1",
+        "user_id": str(user.id),
+        "conversation_id": str(conversation.id),
+        "streamed": True,
+    }
+    assert len(received["callbacks"]) == 1

@@ -20,7 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.logging import bind_context, log_event
+from app.core.logging import bind_context, current_context, log_event
 from app.models import Conversation, Message, User
 from app.services.chat_graph import build_chat_graph, is_conversational
 from app.services.memory_tools import MemoryAccess
@@ -332,10 +332,35 @@ def _persist_turn(
     return user_message, assistant_message
 
 
-def _run_config(turn: _PreparedTurn, telemetry: TurnTelemetry) -> RunnableConfig:
-    """The graph config for a turn, with telemetry attached as a callback."""
+def _run_config(
+    turn: _PreparedTurn,
+    telemetry: TurnTelemetry,
+    streamed: bool,
+) -> RunnableConfig:
+    """The graph config for a turn.
+
+    Attaches telemetry as a callback, and names and tags the run so that,
+    with LangSmith tracing on, a trace can be found from the request_id or
+    conversation_id in a log line. Without tracing these fields are unused.
+    """
+    settings = get_settings()
+    context = current_context()
+    tags = ["curibot"]
+    if settings.web_search_enabled:
+        tags.append("web_search")
+    if settings.memory_enabled:
+        tags.append("memory")
+
     config: RunnableConfig = dict(turn.config or {})  # type: ignore[assignment]
     config["callbacks"] = [telemetry]
+    config["run_name"] = "chat_turn"
+    config["tags"] = tags
+    config["metadata"] = {
+        "request_id": context.get("request_id"),
+        "user_id": context.get("user_id"),
+        "conversation_id": str(turn.conversation.id),
+        "streamed": streamed,
+    }
     return config
 
 
@@ -362,7 +387,7 @@ def send_message(
 
     try:
         result = turn.graph.invoke(
-            turn.graph_input, config=_run_config(turn, telemetry)
+            turn.graph_input, config=_run_config(turn, telemetry, streamed=False)
         )
     except Exception as exc:
         db.rollback()
@@ -410,7 +435,7 @@ def stream_message(
             Iterator[tuple[str, Any]],
             turn.graph.stream(
                 turn.graph_input,
-                config=_run_config(turn, telemetry),
+                config=_run_config(turn, telemetry, streamed=True),
                 stream_mode=["messages", "updates"],
             ),
         ):
