@@ -98,8 +98,8 @@ flowchart LR
 API key, and optionally a [Tavily](https://tavily.com) key for web search.
 
 ```bash
-git clone <repository-url>
-cd stateful-conversation-agent
+git clone https://github.com/jaiganesh-vr/Curibot.git
+cd Curibot
 cp .env.example .env
 ```
 
