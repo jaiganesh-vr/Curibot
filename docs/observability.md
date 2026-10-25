@@ -74,7 +74,25 @@ LANGSMITH_API_KEY=<your key>
 LANGSMITH_PROJECT=curibot
 ```
 
-Then rebuild the backend: `docker compose up -d --build backend`.
+Then rebuild the backend: `docker compose up -d --build backend`. The
+project appears in LangSmith after the first trace is accepted.
+
+### Troubleshooting
+
+If no project appears, look for upload warnings:
+
+```bash
+docker compose logs backend --no-log-prefix | jq -R 'fromjson? | select(.logger=="langsmith.client") | .event'
+```
+
+`403 Forbidden` means the key was rejected:
+
+- Use a key that starts with `lsv2_pt_` (personal access token) or
+  `lsv2_sk_` (service key), from **Settings → API Keys** in LangSmith.
+- EU accounts (`eu.smith.langchain.com`) also need
+  `LANGSMITH_ENDPOINT=https://eu.api.smith.langchain.com`.
+- Service keys that span several workspaces also need
+  `LANGSMITH_WORKSPACE_ID`.
 
 ### Finding a trace from a log line
 

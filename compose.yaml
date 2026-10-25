@@ -36,6 +36,10 @@ services:
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-curibot}
+      # EU accounts: https://eu.api.smith.langchain.com. Empty uses the US API.
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      # Only for service keys (lsv2_sk_) scoped to several workspaces.
+      LANGSMITH_WORKSPACE_ID: ${LANGSMITH_WORKSPACE_ID:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
