@@ -800,15 +800,18 @@ def test_stream_message_uses_checkpoint_and_skips_other_nodes(
             self,
             state: dict[str, Any],
             config: dict[str, Any] | None = None,
-            stream_mode: str | None = None,
+            stream_mode: list[str] | None = None,
         ) -> Any:
-            assert stream_mode == "messages"
+            assert stream_mode == ["messages", "updates"]
             self.received_messages = list(state["messages"])
             self.received_config = config
-            yield AIMessageChunk(content="ignored"), {"langgraph_node": "other"}
-            yield AIMessageChunk(content="Hel"), {"langgraph_node": "call_model"}
-            yield AIMessageChunk(content=""), {"langgraph_node": "call_model"}
-            yield AIMessageChunk(content="lo"), {"langgraph_node": "call_model"}
+            other = {"langgraph_node": "other"}
+            model = {"langgraph_node": "call_model"}
+            yield "messages", (AIMessageChunk(content="ignored"), other)
+            yield "messages", (AIMessageChunk(content="Hel"), model)
+            yield "messages", (AIMessageChunk(content=""), model)
+            yield "messages", (AIMessageChunk(content="lo"), model)
+            yield "updates", {"call_model": {"messages": [AIMessage("Hello")]}}
 
     fake_graph = FakeStreamingGraph()
     monkeypatch.setattr(

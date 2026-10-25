@@ -12,6 +12,7 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -45,6 +46,14 @@ class TokenEvent:
 
 
 @dataclass(frozen=True)
+class ToolCallEvent:
+    """The model asked to run a tool, e.g. a web search, before answering."""
+
+    name: str
+    query: str
+
+
+@dataclass(frozen=True)
 class CompletedEvent:
     """The persisted user/assistant pair once streaming finishes."""
 
@@ -52,7 +61,19 @@ class CompletedEvent:
     assistant_message: Message
 
 
-StreamEvent = TokenEvent | CompletedEvent
+StreamEvent = TokenEvent | ToolCallEvent | CompletedEvent
+
+
+def is_conversational(message: BaseMessage) -> bool:
+    """Whether a message belongs to the visible transcript.
+
+    Tool requests and tool results live in the LangGraph checkpoint so later
+    turns can use them, but only user messages and final answers are saved
+    to the database.
+    """
+    if isinstance(message, ToolMessage):
+        return False
+    return not (isinstance(message, AIMessage) and message.tool_calls)
 
 
 def derive_title(content: str) -> str | None:
@@ -239,7 +260,9 @@ def _prepare_turn(
             message_signature(message) for message in history_messages
         ]
         checkpoint_signatures = [
-            message_signature(message) for message in checkpoint_messages
+            message_signature(message)
+            for message in checkpoint_messages
+            if is_conversational(message)
         ]
 
         checkpoint_is_consistent = (
@@ -361,27 +384,51 @@ def stream_message(
     """
     turn = _prepare_turn(db, user, conversation_id, content, model, checkpointer)
     parts: list[str] = []
+    final_answer: str | None = None
 
     try:
-        for item in turn.graph.stream(
-            turn.graph_input,
-            config=turn.config,
-            stream_mode="messages",
+        # "messages" yields model text as it is generated; "updates" yields
+        # each node's complete output, which shows tool requests and the
+        # final answer.
+        for mode, payload in cast(
+            Iterator[tuple[str, Any]],
+            turn.graph.stream(
+                turn.graph_input,
+                config=turn.config,
+                stream_mode=["messages", "updates"],
+            ),
         ):
-            # The "messages" mode yields (message chunk, metadata) pairs.
-            chunk, metadata = cast(tuple[BaseMessage, dict[str, Any]], item)
-            if metadata.get("langgraph_node") != "call_model":
+            if mode == "messages":
+                chunk, metadata = cast(tuple[BaseMessage, dict[str, Any]], payload)
+                if metadata.get("langgraph_node") != "call_model":
+                    continue
+                if isinstance(chunk.content, str) and chunk.content:
+                    parts.append(chunk.content)
+                    yield TokenEvent(text=chunk.content)
                 continue
-            if isinstance(chunk.content, str) and chunk.content:
-                parts.append(chunk.content)
-                yield TokenEvent(text=chunk.content)
+
+            update = cast(dict[str, Any], payload).get("call_model") or {}
+            for message in update.get("messages", []):
+                if not isinstance(message, AIMessage):
+                    continue
+                if message.tool_calls:
+                    for call in message.tool_calls:
+                        yield ToolCallEvent(
+                            name=call["name"],
+                            query=str(call["args"].get("query", "")),
+                        )
+                elif isinstance(message.content, str):
+                    final_answer = message.content
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to stream chat response")
         raise ChatGenerationError from exc
 
+    # Text streamed before a tool call is not part of the answer, so save
+    # the final model reply rather than everything that was streamed.
+    response_content = final_answer if final_answer is not None else "".join(parts)
     user_message, assistant_message = _persist_turn(
-        db, turn.conversation, content, "".join(parts)
+        db, turn.conversation, content, response_content
     )
     yield CompletedEvent(
         user_message=user_message,

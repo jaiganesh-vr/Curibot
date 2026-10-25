@@ -587,3 +587,44 @@ def test_rename_rejects_titles_over_100_characters() -> None:
 
     assert at_limit.status_code == 200
     assert too_long.status_code == 422
+
+
+def test_stream_message_sends_tool_event_before_the_answer() -> None:
+    from langchain_core.tools import tool
+
+    from app.services.chat_graph import build_chat_graph
+    from tests.test_agent_loop import ScriptedToolModel, search_call
+
+    @tool
+    def web_search(query: str) -> str:
+        """Search the web."""
+        return "Result: https://example.com"
+
+    _, headers = create_authenticated_user("stream-tool@example.com")
+    conversation_id = client.post(
+        "/api/v1/conversations",
+        json={},
+        headers=headers,
+    ).json()["id"]
+    model = ScriptedToolModel(
+        script=[search_call("weather Chennai"), AIMessage("Sunny today.")],
+        calls=[],
+        tool_choices=[],
+    )
+    graph = build_chat_graph(model=model, tools=[web_search])
+
+    with patch(
+        "app.services.conversations.build_chat_graph",
+        return_value=graph,
+    ):
+        response = client.post(
+            f"/api/v1/conversations/{conversation_id}/messages/stream",
+            json={"content": "Weather in Chennai?"},
+            headers=headers,
+        )
+
+    events = parse_sse(response.text)
+    names = [name for name, _ in events]
+    assert ("tool", {"name": "web_search", "query": "weather Chennai"}) in events
+    assert names.index("tool") < names.index("done")
+    assert events[-1][1]["assistant_message"]["content"] == "Sunny today."  # type: ignore[index]

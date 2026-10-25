@@ -1,0 +1,279 @@
+"""The web-search agent loop, end to end, with a scripted model and tool."""
+
+from typing import Any
+
+import pytest
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import BaseTool, tool
+from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import ConfigDict
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import Message
+from app.services.chat_graph import (
+    build_chat_graph,
+    fit_history_to_budget,
+    tool_rounds_in_current_turn,
+)
+from app.services.conversations import (
+    CompletedEvent,
+    TokenEvent,
+    ToolCallEvent,
+    create_conversation,
+    send_message,
+    stream_message,
+)
+from tests.test_conversation_persistence import create_user
+
+
+def search_call(query: str, call_id: str = "call-1") -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": "web_search", "args": {"query": query}, "id": call_id}],
+    )
+
+
+class ScriptedToolModel(BaseChatModel):
+    """Replies from a script and records what each call received.
+
+    When tools are bound with tool_choice="none" it must answer, so it
+    returns `forced_answer` instead of the next scripted reply.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    script: list[AIMessage]
+    forced_answer: str = "Final answer without more searching."
+    calls: list[list[BaseMessage]] = []
+    tool_choices: list[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted-tool-model"
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):  # type: ignore[no-untyped-def,override]
+        return self.bind(tool_choice=tool_choice)
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls.append(list(messages))
+        self.tool_choices.append(kwargs.get("tool_choice"))
+        if kwargs.get("tool_choice") == "none":
+            reply = AIMessage(content=self.forced_answer)
+        else:
+            reply = self.script.pop(0)
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+
+def make_search_tool(queries: list[str], fail: bool = False) -> BaseTool:
+    @tool
+    def web_search(query: str) -> str:
+        """Search the web."""
+        queries.append(query)
+        if fail:
+            raise RuntimeError("search backend down")
+        return f"Result for {query}: https://example.com/news"
+
+    return web_search
+
+
+def test_answers_directly_when_no_search_is_needed() -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(script=[AIMessage("4")], calls=[], tool_choices=[])
+    graph = build_chat_graph(model=model, tools=[make_search_tool(queries)])
+
+    result = graph.invoke({"messages": [HumanMessage("What is 2 + 2?")]})
+
+    assert result["messages"][-1].content == "4"
+    assert queries == []
+    assert len(model.calls) == 1
+
+
+def test_searches_then_answers_with_the_results() -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(
+        script=[
+            search_call("Groq news October 2026"),
+            AIMessage("Groq shipped X. [Source](https://example.com/news)"),
+        ],
+        calls=[],
+        tool_choices=[],
+    )
+    graph = build_chat_graph(model=model, tools=[make_search_tool(queries)])
+
+    result = graph.invoke({"messages": [HumanMessage("Latest Groq news?")]})
+
+    assert queries == ["Groq news October 2026"]
+    assert [type(m) for m in result["messages"]] == [
+        HumanMessage,
+        AIMessage,
+        ToolMessage,
+        AIMessage,
+    ]
+    assert result["messages"][-1].content.startswith("Groq shipped X.")
+
+    # The second model call sees the search results, and the prompt
+    # describes the search tool rather than claiming no internet access.
+    second_call = model.calls[1]
+    assert isinstance(second_call[0], SystemMessage)
+    assert "web_search tool" in second_call[0].content
+    assert "untrusted web content" in second_call[0].content
+    assert "Result for Groq news October 2026" in second_call[-1].content
+
+
+def test_round_limit_forces_an_answer() -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(
+        script=[search_call("first", "c1"), search_call("second", "c2")],
+        calls=[],
+        tool_choices=[],
+    )
+    graph = build_chat_graph(
+        model=model, tools=[make_search_tool(queries)], max_tool_rounds=2
+    )
+
+    result = graph.invoke({"messages": [HumanMessage("Keep searching")]})
+
+    assert queries == ["first", "second"]
+    assert model.tool_choices == [None, None, "none"]
+    assert result["messages"][-1].content == model.forced_answer
+
+
+def test_tool_failure_is_reported_to_the_model_not_raised() -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(
+        script=[search_call("anything"), AIMessage("I couldn't search right now.")],
+        calls=[],
+        tool_choices=[],
+    )
+    graph = build_chat_graph(model=model, tools=[make_search_tool(queries, fail=True)])
+
+    result = graph.invoke({"messages": [HumanMessage("Search please")]})
+
+    tool_message = result["messages"][2]
+    assert isinstance(tool_message, ToolMessage)
+    assert tool_message.status == "error"
+    assert result["messages"][-1].content == "I couldn't search right now."
+
+
+def test_round_counter_only_counts_the_current_turn() -> None:
+    history = [
+        HumanMessage("old question"),
+        search_call("old"),
+        ToolMessage("old results", tool_call_id="call-1"),
+        AIMessage("old answer"),
+        HumanMessage("new question"),
+        search_call("new", "call-2"),
+    ]
+
+    assert tool_rounds_in_current_turn(history) == 1
+
+
+def test_budget_fallback_keeps_the_whole_current_turn() -> None:
+    current_turn = [
+        HumanMessage("question"),
+        search_call("q"),
+        ToolMessage("x " * 5_000, tool_call_id="call-1"),
+    ]
+    history = [HumanMessage("older"), AIMessage("older answer"), *current_turn]
+
+    assert fit_history_to_budget(history, max_tokens=1_000) == current_turn
+
+
+def test_stream_reports_the_search_and_saves_only_the_final_answer(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(
+        script=[
+            AIMessage(
+                content="Let me check.",
+                tool_calls=[{"name": "web_search", "args": {"query": "q"}, "id": "c1"}],
+            ),
+            AIMessage("Here is the answer. [Source](https://example.com/news)"),
+        ],
+        calls=[],
+        tool_choices=[],
+    )
+    search_tool = make_search_tool(queries)
+    monkeypatch.setattr(
+        "app.services.conversations.build_chat_graph",
+        lambda **kwargs: build_chat_graph(
+            model=model, checkpointer=kwargs.get("checkpointer"), tools=[search_tool]
+        ),
+    )
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    events = list(stream_message(db_session, user, conversation.id, "News?"))
+
+    assert ToolCallEvent(name="web_search", query="q") in events
+    tool_index = events.index(ToolCallEvent(name="web_search", query="q"))
+    streamed_after = "".join(
+        e.text for e in events[tool_index:] if isinstance(e, TokenEvent)
+    )
+    assert streamed_after == "Here is the answer. [Source](https://example.com/news)"
+
+    completed = events[-1]
+    assert isinstance(completed, CompletedEvent)
+    assert completed.assistant_message.content == (
+        "Here is the answer. [Source](https://example.com/news)"
+    )
+    saved = db_session.scalars(select(Message).order_by(Message.created_at)).all()
+    assert [(m.role, m.content) for m in saved] == [
+        ("user", "News?"),
+        ("assistant", "Here is the answer. [Source](https://example.com/news)"),
+    ]
+
+
+def test_checkpoint_with_tool_steps_is_reused_on_the_next_turn(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queries: list[str] = []
+    model = ScriptedToolModel(
+        script=[
+            search_call("first question"),
+            AIMessage("First answer."),
+            AIMessage("Follow-up answer."),
+        ],
+        calls=[],
+        tool_choices=[],
+    )
+    search_tool = make_search_tool(queries)
+    saver = InMemorySaver()
+    deleted_threads: list[str] = []
+    original_delete = saver.delete_thread
+
+    def spy_delete(thread_id: str) -> None:
+        deleted_threads.append(thread_id)
+        original_delete(thread_id)
+
+    monkeypatch.setattr(saver, "delete_thread", spy_delete)
+    monkeypatch.setattr(
+        "app.services.conversations.build_chat_graph",
+        lambda **kwargs: build_chat_graph(
+            model=model, checkpointer=kwargs.get("checkpointer"), tools=[search_tool]
+        ),
+    )
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    send_message(db_session, user, conversation.id, "First?", checkpointer=saver)
+    send_message(db_session, user, conversation.id, "And then?", checkpointer=saver)
+
+    # Tool steps in the checkpoint do not count as a mismatch with the
+    # saved transcript, so the checkpoint is kept and reused.
+    assert deleted_threads == []
+    follow_up_call = model.calls[-1]
+    assert any(isinstance(m, ToolMessage) for m in follow_up_call)
+    assert follow_up_call[-1].content == "And then?"

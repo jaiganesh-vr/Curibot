@@ -24,6 +24,7 @@ from app.services.conversations import (
     ChatGenerationError,
     ConversationNotFoundError,
     TokenEvent,
+    ToolCallEvent,
     create_conversation,
     delete_conversation,
     get_owned_conversation,
@@ -183,8 +184,10 @@ def stream_message_endpoint(
 ) -> StreamingResponse:
     """Stream the assistant reply as Server-Sent Events.
 
-    Events: "token" ({"text"}) for each piece of the reply, then either
-    "done" (the saved chat turn) or "error" ({"detail"}).
+    Events: "token" ({"text"}) for each piece of the reply, "tool"
+    ({"name", "query"}) when the assistant runs a tool such as web search,
+    then either "done" (the saved chat turn) or "error" ({"detail"}). Text
+    streamed before a "tool" event is not part of the final answer.
     """
     # Check ownership up front so a missing conversation is a normal 404.
     try:
@@ -208,6 +211,8 @@ def stream_message_endpoint(
             ):
                 if isinstance(event, TokenEvent):
                     yield format_sse("token", {"text": event.text})
+                elif isinstance(event, ToolCallEvent):
+                    yield format_sse("tool", {"name": event.name, "query": event.query})
                 else:
                     turn = ChatTurnResponse(
                         user_message=MessageResponse.model_validate(event.user_message),
