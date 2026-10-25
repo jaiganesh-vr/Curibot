@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { checkHealth, type HealthStatus } from "./api/client";
+import { checkHealth, type HealthStatus } from "../api/client";
 
 export type ConnectionStatus = "checking" | HealthStatus;
 

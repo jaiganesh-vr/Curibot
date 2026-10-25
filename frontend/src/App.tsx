@@ -23,15 +23,15 @@ import {
   type Message,
   type User,
 } from "./api/client";
-import ConfirmDialog from "./ConfirmDialog";
-import MarkdownMessage from "./MarkdownMessage";
-import StreamingReply from "./StreamingReply";
-import ThemeSwitcher from "./ThemeSwitcher";
+import ConfirmDialog from "./components/ConfirmDialog";
+import MarkdownMessage from "./components/MarkdownMessage";
+import StreamingReply from "./components/StreamingReply";
+import ThemeSwitcher from "./components/ThemeSwitcher";
 import {
   useConnectionStatus,
   type ConnectionStatus,
-} from "./useConnectionStatus";
-import { useTheme } from "./useTheme";
+} from "./hooks/useConnectionStatus";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
 type AuthMode = "login" | "register";

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ThemePreference } from "./useTheme";
+import type { ThemePreference } from "../hooks/useTheme";
 
 const iconProps = {
   className: "theme-icon",
