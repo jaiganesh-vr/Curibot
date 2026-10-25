@@ -457,7 +457,10 @@ describe("App authentication screen", () => {
                 "LangGraph helps build stateful agent workflows.",
             ),
         ).toBeTruthy();
-        expect(document.querySelector(".message-streaming")).toBeNull();
+        // The saved turn replaces the streaming one once it is fully revealed.
+        await waitFor(() => {
+            expect(document.querySelector(".message-streaming")).toBeNull();
+        });
         expect(screen.getAllByText("Explain LangGraph")).toHaveLength(1);
     });
 
@@ -995,9 +998,14 @@ describe("Streaming replies", () => {
 
         stream.finish();
 
+        // Send re-enables (with a draft present) once the stream has ended.
+        await user.type(
+            screen.getByRole("textbox", { name: "Message" }),
+            "Draft",
+        );
         await waitFor(() => {
             expect(
-                screen.getByRole("textbox", { name: "Message" }),
+                screen.getByRole("button", { name: "Send message" }),
             ).not.toBeDisabled();
         });
         expect(screen.queryByText("Streamed reply")).toBeNull();
@@ -1025,6 +1033,81 @@ describe("Streaming replies", () => {
                 name: "What would you like to explore?",
             }),
         ).toBeTruthy();
+    });
+
+    it("keeps the composer focused and lets the user type ahead during a reply", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream(["Thinking it over"]);
+
+        await openChatAndSend(user);
+        expect(await screen.findByText("Thinking it over")).toBeTruthy();
+
+        const composer = screen.getByRole("textbox", { name: "Message" });
+        expect(composer).not.toBeDisabled();
+        expect(composer).toHaveFocus();
+
+        await user.type(composer, "Next question{Enter}");
+
+        expect(composer).toHaveValue("Next question");
+        expect(streamMessage).toHaveBeenCalledTimes(1);
+        expect(
+            screen.getByRole("button", { name: "Send message" }),
+        ).toBeDisabled();
+
+        stream.finish();
+
+        expect(await screen.findByText("Streamed reply")).toBeTruthy();
+        expect(composer).toHaveValue("Next question");
+        expect(composer).toHaveFocus();
+        await waitFor(() => {
+            expect(
+                screen.getByRole("button", { name: "Send message" }),
+            ).not.toBeDisabled();
+        });
+    });
+
+    it("keeps a new draft instead of restoring a failed message", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream([]);
+
+        await openChatAndSend(user, "First message");
+        await user.type(
+            screen.getByRole("textbox", { name: "Message" }),
+            "Newer draft",
+        );
+
+        stream.fail(new Error("Network unavailable"));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Unable to send your message. Please try again.",
+        );
+        expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
+            "Newer draft",
+        );
+    });
+
+    it("focuses the composer when a conversation is opened", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([first, second]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "Second chat" }),
+        );
+
+        expect(
+            await screen.findByRole("textbox", { name: "Message" }),
+        ).toHaveFocus();
     });
 
     it("disables Delete for the conversation that is still streaming", async () => {

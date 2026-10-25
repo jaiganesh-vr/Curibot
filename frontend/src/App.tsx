@@ -1,5 +1,5 @@
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   createConversation,
@@ -11,11 +11,13 @@ import {
   register,
   renameConversation,
   streamMessage,
+  type ChatTurn,
   type Conversation,
   type Message,
   type User,
 } from "./api/client";
 import MarkdownMessage from "./MarkdownMessage";
+import StreamingReply from "./StreamingReply";
 import "./App.css";
 
 type AuthMode = "login" | "register";
@@ -25,6 +27,8 @@ interface PendingTurn {
   conversationId: string;
   userContent: string;
   reply: string;
+  // Set when the server finishes; the turn is committed once revealed.
+  savedTurn: ChatTurn | null;
 }
 
 // Follow streaming text only while the reader is already near the bottom.
@@ -65,6 +69,9 @@ function App() {
   const chatContentRef = useRef<HTMLDivElement>(null);
   // Lets an in-flight stream check which conversation is open when it ends.
   const selectedConversationIdRef = useRef<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Latest pending turn for handlers that run after an await.
+  const pendingTurnRef = useRef<PendingTurn | null>(null);
   // Enter, Escape, and blur can all end a rename; only the first one counts.
   const renameFinishedRef = useRef(false);
 
@@ -214,8 +221,10 @@ function App() {
     };
   }, [user, selectedConversationId]);
 
+  // Track the open chat and put the cursor in its composer, ready to type.
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
+    composerRef.current?.focus();
   }, [selectedConversationId]);
 
   // Jump to the newest message when history loads or a turn is saved.
@@ -227,11 +236,26 @@ function App() {
     }
   }, [messages]);
 
-  // Follow a streaming reply unless the user has scrolled up to read.
+  useEffect(() => {
+    pendingTurnRef.current = pendingTurn;
+  }, [pendingTurn]);
+
+  // Bring a newly sent message and its "Thinking..." indicator into view.
+  const pendingStarted = pendingTurn !== null && pendingTurn.reply === "";
+
   useEffect(() => {
     const chatContent = chatContentRef.current;
 
-    if (!chatContent || pendingTurn === null) {
+    if (chatContent && pendingStarted) {
+      chatContent.scrollTop = chatContent.scrollHeight;
+    }
+  }, [pendingStarted]);
+
+  // Follow a revealing reply unless the user has scrolled up to read.
+  const followStreamingReply = useCallback(() => {
+    const chatContent = chatContentRef.current;
+
+    if (!chatContent) {
       return;
     }
 
@@ -240,13 +264,10 @@ function App() {
       chatContent.scrollTop -
       chatContent.clientHeight;
 
-    if (
-      pendingTurn.reply === "" ||
-      distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX
-    ) {
+    if (distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX) {
       chatContent.scrollTop = chatContent.scrollHeight;
     }
-  }, [pendingTurn]);
+  }, []);
 
   // Close the conversation options menu on an outside click or Escape.
   useEffect(() => {
@@ -335,6 +356,7 @@ function App() {
         ...current.filter((item) => item.id !== conversation.id),
       ]);
 
+      dropFinishedPendingTurn();
       setMessages([]);
       setComposer("");
       setSelectedConversationId(conversation.id);
@@ -447,6 +469,8 @@ function App() {
       return;
     }
 
+    dropFinishedPendingTurn();
+
     setSelectedConversationId(conversationId);
     setComposer("");
     setMessages([]);
@@ -473,10 +497,19 @@ function App() {
     setSending(true);
     setChatError("");
     setComposer("");
-    setPendingTurn({ conversationId, userContent: content, reply: "" });
+    setPendingTurn({
+      conversationId,
+      userContent: content,
+      reply: "",
+      savedTurn: null,
+    });
+    // Clicking Send moves focus to the button; return it to the composer.
+    composerRef.current?.focus();
+
+    let turn: ChatTurn;
 
     try {
-      const turn = await streamMessage(
+      turn = await streamMessage(
         token,
         conversationId,
         content,
@@ -488,17 +521,20 @@ function App() {
           ),
       );
 
-      // If the user switched chats mid-stream, the saved turn loads with
-      // that conversation's history instead of landing in another chat.
-      if (selectedConversationIdRef.current === conversationId) {
-        setMessages((current) => [
-          ...current,
-          turn.user_message,
-          turn.assistant_message,
-        ]);
-      }
+    } catch (err) {
+      // Restore the failed message unless the user already typed a new one.
+      setComposer((current) => (current.trim() ? current : content));
+      setChatError(
+        err instanceof ApiError
+          ? err.message
+          : "Unable to send your message. Please try again.",
+      );
+      setPendingTurn(null);
+      setSending(false);
+      return;
+    }
 
-      setConversations((current) => {
+    setConversations((current) => {
         const updated = current.map((conversation) =>
           conversation.id === conversationId
             ? {
@@ -517,14 +553,44 @@ function App() {
             new Date(a.updated_at).getTime(),
         );
       });
-    } catch (err) {
-      setComposer(content);
-      setChatError(
-        err instanceof ApiError
-          ? err.message
-          : "Unable to send your message. Please try again.",
+
+    if (selectedConversationIdRef.current === conversationId) {
+      // StreamingReply finishes revealing, then handleReplyRevealed commits.
+      setPendingTurn((current) =>
+        current?.conversationId === conversationId
+          ? { ...current, savedTurn: turn }
+          : current,
       );
-    } finally {
+    } else {
+      // The saved turn loads with that conversation's history later.
+      setPendingTurn(null);
+      setSending(false);
+    }
+  }
+
+  function handleReplyRevealed() {
+    const turn = pendingTurn?.savedTurn;
+
+    if (!pendingTurn || !turn) {
+      return;
+    }
+
+    if (selectedConversationIdRef.current === pendingTurn.conversationId) {
+      setMessages((current) => [
+        ...current,
+        turn.user_message,
+        turn.assistant_message,
+      ]);
+    }
+
+    setPendingTurn(null);
+    setSending(false);
+  }
+
+  // A finished turn that is still revealing needs no animation once the user
+  // leaves its conversation; it is already saved and loads with the history.
+  function dropFinishedPendingTurn() {
+    if (pendingTurnRef.current?.savedTurn) {
       setPendingTurn(null);
       setSending(false);
     }
@@ -819,22 +885,12 @@ function App() {
                         </div>
                       </article>
 
-                      <article
-                        className={`message message-assistant ${pendingTurn.reply ? "message-streaming" : ""}`}
-                        aria-busy="true"
-                      >
-                        <div className="message-avatar">C</div>
-                        <div className="message-body">
-                          <p className="message-role">Assistant</p>
-                          {pendingTurn.reply ? (
-                            <MarkdownMessage content={pendingTurn.reply} />
-                          ) : (
-                            <p className="message-text message-thinking">
-                              Thinking...
-                            </p>
-                          )}
-                        </div>
-                      </article>
+                      <StreamingReply
+                        text={pendingTurn.reply}
+                        complete={pendingTurn.savedTurn !== null}
+                        onRevealed={handleReplyRevealed}
+                        onGrow={followStreamingReply}
+                      />
                     </>
                   )}
                 </div>
@@ -848,7 +904,13 @@ function App() {
                 className="composer"
                 onSubmit={handleSendMessage}
               >
+                {/*
+                  The textarea stays editable during a reply so the next
+                  message can be drafted; handleSendMessage blocks sending.
+                  Disabling it would also drop keyboard focus.
+                */}
                 <textarea
+                  ref={composerRef}
                   aria-label="Message"
                   placeholder="Message Curibot..."
                   value={composer}
@@ -864,7 +926,6 @@ function App() {
                     }
                   }}
                   rows={2}
-                  disabled={sending || messagesLoading}
                 />
 
                 <div className="composer-footer">
