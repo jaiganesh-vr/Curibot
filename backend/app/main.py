@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.conversations import router as conversations_router
+from app.api.routes.memories import router as memories_router
 from app.core.config import get_settings
 from app.db.session import check_database_connection
 
@@ -62,6 +63,7 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
+app.include_router(memories_router, prefix="/api/v1")
 
 
 @app.get("/health/live", tags=["health"])
