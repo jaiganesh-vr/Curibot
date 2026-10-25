@@ -23,57 +23,24 @@ import {
   type Message,
   type User,
 } from "./api/client";
+import ChatHeader from "./components/ChatHeader";
+import Composer from "./components/Composer";
 import ConfirmDialog from "./components/ConfirmDialog";
-import MarkdownMessage from "./components/MarkdownMessage";
-import StreamingReply from "./components/StreamingReply";
+import MessageList from "./components/MessageList";
+import PlusIcon from "./components/PlusIcon";
+import SessionRestoring from "./components/SessionRestoring";
 import ThemeSwitcher from "./components/ThemeSwitcher";
-import {
-  useConnectionStatus,
-  type ConnectionStatus,
-} from "./hooks/useConnectionStatus";
-import { useTheme } from "./hooks/useTheme";
+import WelcomeScreen from "./components/WelcomeScreen";
+import { useConnectionStatus } from "./hooks/useConnectionStatus";
+import type { PendingTurn } from "./types";
 import "./App.css";
 
 type AuthMode = "login" | "register";
 
-const CONNECTION_LABELS: Record<ConnectionStatus, string> = {
-  checking: "Connecting…",
-  online: "Connected",
-  degraded: "Database unavailable",
-  offline: "Offline",
-};
-
 const SESSION_EXPIRED_NOTICE = "Your session has expired. Please sign in again.";
-
-// A turn shown while the assistant reply is still streaming in.
-interface PendingTurn {
-  conversationId: string;
-  userContent: string;
-  reply: string;
-  // Set when the server finishes; the turn is committed once revealed.
-  savedTurn: ChatTurn | null;
-}
 
 // Follow streaming text only while the reader is already near the bottom.
 const STICK_TO_BOTTOM_THRESHOLD_PX = 160;
-
-function PlusIcon() {
-  return (
-    <svg
-      className="new-chat-icon"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M8 3v10M3 8h10"
-        stroke="currentColor"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
 
 function getStoredToken(): string | null {
   return sessionStorage.getItem("access_token");
@@ -121,8 +88,6 @@ function App() {
   // The options button that opened the dialog; the menu item itself is gone
   // by the time the dialog closes, so focus returns here instead.
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
-
-  const { theme, setTheme } = useTheme();
 
   const { status: connectionStatus, recheck: recheckConnection } =
     useConnectionStatus(user !== null);
@@ -784,16 +749,7 @@ function App() {
   }
 
   if (restoringSession) {
-    return (
-      <main className="auth-page">
-        <div className="session-restoring" role="status">
-          <div className="brand-mark" aria-hidden="true">
-            C
-          </div>
-          <p>Restoring your session…</p>
-        </div>
-      </main>
-    );
+    return <SessionRestoring />;
   }
 
   if (user) {
@@ -976,7 +932,7 @@ function App() {
             )}
           </div>
 
-          <ThemeSwitcher theme={theme} onChange={setTheme} />
+          <ThemeSwitcher />
 
           <div className="sidebar-footer">
             <div className="avatar">
@@ -999,180 +955,39 @@ function App() {
         </aside>
 
         <section className="chat-panel">
-          <header className="chat-header">
-            <button
-              ref={sidebarToggleRef}
-              className="sidebar-toggle"
-              type="button"
-              aria-label="Open conversations"
-              aria-controls="sidebar"
-              aria-expanded={sidebarOpen}
-              onClick={() => setSidebarOpen(true)}
-            >
-              <span aria-hidden="true" />
-              <span aria-hidden="true" />
-              <span aria-hidden="true" />
-            </button>
-
-            <div className="chat-header-title">
-              <p className="header-eyebrow">YOUR AI WORKSPACE</p>
-              <h1>
-                {selectedConversation?.title || "Curibot"}
-              </h1>
-            </div>
-
-            <span
-              className={`connection-status connection-${connectionStatus}`}
-              aria-live="polite"
-            >
-              <span className="status-dot" aria-hidden="true" />
-              <span className="connection-label">
-                {CONNECTION_LABELS[connectionStatus]}
-              </span>
-            </span>
-          </header>
+          <ChatHeader
+            title={selectedConversation?.title || "Curibot"}
+            connectionStatus={connectionStatus}
+            sidebarOpen={sidebarOpen}
+            onOpenSidebar={() => setSidebarOpen(true)}
+            sidebarToggleRef={sidebarToggleRef}
+          />
 
           <div className="chat-content" ref={chatContentRef}>
             {!selectedConversationId ? (
-              <div className="welcome-content">
-                <div className="welcome-icon" aria-hidden="true">
-                  ✳
-                </div>
-
-                <h2>Your AI workspace</h2>
-
-                <p>
-                  Start a new conversation to ask a question and
-                  interact with your AI assistant. Your conversations
-                  are saved to your account.
-                </p>
-
-                <button
-                  className="new-chat-button welcome-new-chat"
-                  type="button"
-                  onClick={() => void handleNewChat()}
-                  disabled={creatingConversation}
-                >
-                  <PlusIcon />
-                  {creatingConversation ? "Creating…" : "Start a new chat"}
-                </button>
-              </div>
+              <WelcomeScreen
+                creating={creatingConversation}
+                onNewChat={() => void handleNewChat()}
+              />
             ) : (
-              <div className="conversation-view">
-                <div className="message-list" aria-live="polite">
-                  {messagesLoading ? (
-                    <p className="chat-status">
-                      Loading messages...
-                    </p>
-                  ) : messages.length === 0 && !showPendingTurn ? (
-                    <div className="conversation-empty">
-                      <h2>What would you like to explore?</h2>
-                      <p>Send a message to start this conversation.</p>
-                    </div>
-                  ) : (
-                    messages.map((message) => (
-                      <article
-                        className={`message message-${message.role}`}
-                        key={message.id}
-                      >
-                        <div className="message-avatar">
-                          {message.role === "user" ? "Y" : "C"}
-                        </div>
-
-                        <div className="message-body">
-                          <p className="message-role">
-                            {message.role === "user"
-                              ? "You"
-                              : "Assistant"}
-                          </p>
-                          {message.role === "assistant" ? (
-                            <MarkdownMessage content={message.content} />
-                          ) : (
-                            <p className="message-text">
-                              {message.content}
-                            </p>
-                          )}
-                        </div>
-                      </article>
-                    ))
-                  )}
-
-                  {showPendingTurn && pendingTurn && (
-                    <>
-                      <article className="message message-user">
-                        <div className="message-avatar">Y</div>
-                        <div className="message-body">
-                          <p className="message-role">You</p>
-                          <p className="message-text">
-                            {pendingTurn.userContent}
-                          </p>
-                        </div>
-                      </article>
-
-                      <StreamingReply
-                        text={pendingTurn.reply}
-                        complete={pendingTurn.savedTurn !== null}
-                        onRevealed={handleReplyRevealed}
-                        onGrow={followStreamingReply}
-                      />
-                    </>
-                  )}
-                </div>
-              </div>
+              <MessageList
+                messages={messages}
+                loading={messagesLoading}
+                pendingTurn={showPendingTurn ? pendingTurn : null}
+                onReplyRevealed={handleReplyRevealed}
+                onReplyGrow={followStreamingReply}
+              />
             )}
           </div>
 
           {selectedConversationId && (
-            <>
-              <form
-                className="composer"
-                onSubmit={handleSendMessage}
-              >
-                {/*
-                  The textarea stays editable during a reply so the next
-                  message can be drafted; handleSendMessage blocks sending.
-                  Disabling it would also drop keyboard focus.
-                */}
-                <textarea
-                  ref={composerRef}
-                  aria-label="Message"
-                  placeholder="Message Curibot..."
-                  value={composer}
-                  onChange={(event) => setComposer(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (
-                      event.key === "Enter" &&
-                      !event.shiftKey &&
-                      !event.nativeEvent.isComposing
-                    ) {
-                      event.preventDefault();
-                      event.currentTarget.form?.requestSubmit();
-                    }
-                  }}
-                  rows={2}
-                />
-
-                <div className="composer-footer">
-                  <span>Enter to send · Shift+Enter for a new line</span>
-
-                  <button
-                    type="submit"
-                    aria-label="Send message"
-                    disabled={
-                      !composer.trim() ||
-                      sending ||
-                      messagesLoading
-                    }
-                  >
-                    ↑
-                  </button>
-                </div>
-              </form>
-
-              <p className="disclaimer">
-                AI responses may be inaccurate. Verify important information.
-              </p>
-            </>
+            <Composer
+              value={composer}
+              onChange={setComposer}
+              onSubmit={handleSendMessage}
+              sendBlocked={sending || messagesLoading}
+              textareaRef={composerRef}
+            />
           )}
         </section>
 

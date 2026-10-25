@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { ThemePreference } from "../hooks/useTheme";
+import { useTheme, type ThemePreference } from "../hooks/useTheme";
 
 const iconProps = {
   className: "theme-icon",
@@ -44,12 +44,10 @@ const OPTIONS: { value: ThemePreference; label: string; icon: ReactNode }[] = [
   },
 ];
 
-interface ThemeSwitcherProps {
-  theme: ThemePreference;
-  onChange: (theme: ThemePreference) => void;
-}
+// Owns the theme choice: nothing else in the app reads it.
+function ThemeSwitcher() {
+  const { theme, setTheme } = useTheme();
 
-function ThemeSwitcher({ theme, onChange }: ThemeSwitcherProps) {
   return (
     <div className="theme-switcher" role="group" aria-label="Theme">
       {OPTIONS.map((option) => (
@@ -58,7 +56,7 @@ function ThemeSwitcher({ theme, onChange }: ThemeSwitcherProps) {
           className="theme-option"
           type="button"
           aria-pressed={theme === option.value}
-          onClick={() => onChange(option.value)}
+          onClick={() => setTheme(option.value)}
         >
           {option.icon}
           {option.label}
