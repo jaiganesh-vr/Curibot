@@ -32,6 +32,7 @@ function SettingsMenu({ onOpenMemory, onSignOut, onOpenChange }: SettingsMenuPro
   const toggleRef = useRef<HTMLButtonElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
   const panelId = useId();
+  const headingId = useId();
 
   useEffect(() => {
     onOpenChange(open);
@@ -73,7 +74,16 @@ function SettingsMenu({ onOpenMemory, onSignOut, onOpenChange }: SettingsMenuPro
   return (
     <div className="settings" ref={containerRef}>
       {open && (
-        <div id={panelId} className="settings-panel" aria-label="Settings">
+        <div
+          id={panelId}
+          className="settings-panel"
+          role="group"
+          aria-labelledby={headingId}
+        >
+          <span id={headingId} className="settings-label settings-heading">
+            Settings
+          </span>
+
           <button
             ref={firstItemRef}
             className="settings-item"
@@ -118,9 +128,10 @@ function SettingsMenu({ onOpenMemory, onSignOut, onOpenChange }: SettingsMenuPro
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((current) => !current)}
       >
-        <svg className="settings-toggle-icon" {...iconProps}>
-          <circle cx="8" cy="8" r="2" />
-          <path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" />
+        {/* A gear: eight teeth around a centre hole. */}
+        <svg className="settings-toggle-icon" {...iconProps} viewBox="0 0 24 24">
+          <path d="M10.3 2.8a1.7 1.7 0 0 1 3.4 0l.2 1.1a1.7 1.7 0 0 0 2.4 1l1-.5a1.7 1.7 0 0 1 2.4 2.4l-.5 1a1.7 1.7 0 0 0 1 2.4l1.1.2a1.7 1.7 0 0 1 0 3.4l-1.1.2a1.7 1.7 0 0 0-1 2.4l.5 1a1.7 1.7 0 0 1-2.4 2.4l-1-.5a1.7 1.7 0 0 0-2.4 1l-.2 1.1a1.7 1.7 0 0 1-3.4 0l-.2-1.1a1.7 1.7 0 0 0-2.4-1l-1 .5a1.7 1.7 0 0 1-2.4-2.4l.5-1a1.7 1.7 0 0 0-1-2.4l-1.1-.2a1.7 1.7 0 0 1 0-3.4l1.1-.2a1.7 1.7 0 0 0 1-2.4l-.5-1a1.7 1.7 0 0 1 2.4-2.4l1 .5a1.7 1.7 0 0 0 2.4-1Z" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
       </button>
     </div>

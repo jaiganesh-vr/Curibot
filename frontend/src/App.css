@@ -447,6 +447,11 @@
   text-transform: uppercase;
 }
 
+/* Aligned with the Theme label below it. */
+.settings-heading {
+  padding: 8px 10px 2px;
+}
+
 .settings-divider {
   height: 1px;
   margin: 4px 6px;

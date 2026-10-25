@@ -2064,6 +2064,7 @@ describe("Settings menu", () => {
         await user.click(toggle);
 
         expect(toggle).toHaveAttribute("aria-expanded", "true");
+        expect(screen.getByRole("group", { name: "Settings" })).toBeTruthy();
         expect(screen.getByRole("button", { name: "Memory" })).toHaveFocus();
         expect(screen.getByRole("group", { name: "Theme" })).toBeTruthy();
         expect(screen.getByRole("button", { name: "Log out" })).toBeTruthy();
