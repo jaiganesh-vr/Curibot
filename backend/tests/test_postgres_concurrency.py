@@ -506,3 +506,51 @@ def test_postgres_checkpoint_recovers_after_message_commit_failure() -> None:
                         session.delete(user)
             finally:
                 engine.dispose()
+
+
+def test_pooled_checkpointer_recovers_after_connections_are_killed() -> None:
+    """A database restart kills open connections; the pool must replace them."""
+    from psycopg.rows import dict_row
+    from psycopg_pool import ConnectionPool
+
+    database_url = os.environ["TEST_DATABASE_URL"]
+    if make_url(database_url).database != "conversation_agent_test":
+        pytest.fail(
+            "Refusing to run PostgreSQL integration tests against a database "
+            "other than 'conversation_agent_test'."
+        )
+
+    config = {"configurable": {"thread_id": str(uuid4())}}
+    admin_engine = create_engine(
+        database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    )
+
+    with ConnectionPool(
+        conninfo=database_url,
+        min_size=1,
+        max_size=2,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        check=ConnectionPool.check_connection,
+    ) as pool:
+        checkpointer = PostgresSaver(pool)
+        checkpointer.setup()
+        assert checkpointer.get_tuple(config) is None  # type: ignore[arg-type]
+
+        with pool.connection() as conn:
+            pooled_pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()[
+                "pid"
+            ]  # type: ignore[index]
+
+        with admin_engine.connect() as admin:
+            admin.execute(
+                text("SELECT pg_terminate_backend(:pid)"), {"pid": pooled_pid}
+            )
+
+        # The killed connection is detected and replaced, not reused.
+        assert checkpointer.get_tuple(config) is None  # type: ignore[arg-type]
+
+        with pool.connection() as conn:
+            new_pid = conn.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]  # type: ignore[index]
+        assert new_pid != pooled_pid
+
+    admin_engine.dispose()

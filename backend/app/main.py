@@ -4,12 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import Connection
+from psycopg.rows import DictRow, dict_row
+from psycopg_pool import ConnectionPool
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.routes.auth import router as auth_router
 from app.api.routes.conversations import router as conversations_router
 from app.core.config import get_settings
 from app.db.session import check_database_connection
+
+# Concurrent chat turns each borrow a checkpoint connection.
+CHECKPOINT_POOL_MAX_SIZE = 10
 
 
 @asynccontextmanager
@@ -20,7 +26,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         hide_password=False
     )
 
-    with PostgresSaver.from_conn_string(conn_string) as checkpointer:
+    # A pool, unlike a single connection, survives database restarts: each
+    # connection is checked before use and replaced if it has died. The
+    # connection options match what PostgresSaver requires.
+    with ConnectionPool[Connection[DictRow]](
+        conninfo=conn_string,
+        min_size=1,
+        max_size=CHECKPOINT_POOL_MAX_SIZE,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
+        check=ConnectionPool.check_connection,
+    ) as pool:
+        checkpointer = PostgresSaver(pool)
         checkpointer.setup()
         app.state.checkpointer = checkpointer
         yield
