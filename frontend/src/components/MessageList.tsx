@@ -64,7 +64,10 @@ function MessageList({
             </article>
 
             <StreamingReply
+              // A new segment restarts the paced reveal from the beginning.
+              key={pendingTurn.segment}
               text={pendingTurn.reply}
+              activity={pendingTurn.activity}
               complete={pendingTurn.savedTurn !== null}
               onRevealed={onReplyRevealed}
               onGrow={onReplyGrow}

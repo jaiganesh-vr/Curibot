@@ -452,6 +452,7 @@ describe("App authentication screen", () => {
                 "conversation-1",
                 "Explain LangGraph",
                 expect.any(Function),
+                expect.any(Function),
             );
         });
 
@@ -533,6 +534,7 @@ describe("App authentication screen", () => {
             "test-access-token",
             "conversation-1",
             "Please explain state persistence",
+            expect.any(Function),
             expect.any(Function),
         );
     });
@@ -1751,5 +1753,92 @@ describe("Theme switcher", () => {
             "aria-pressed",
             "true",
         );
+    });
+});
+
+describe("Web search activity", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("shows the search, drops pre-search text, then streams the answer", async () => {
+        const user = userEvent.setup();
+        const steps = {
+            search: () => {},
+            answer: () => {},
+        };
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([
+            {
+                id: "conversation-1",
+                title: "Weather",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+            },
+        ]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+        vi.mocked(streamMessage).mockImplementation(
+            async (_token, _conversationId, _content, onToken, onToolCall) => {
+                onToken("Let me check that.");
+                await new Promise<void>((resolve) => {
+                    steps.search = resolve;
+                });
+                onToolCall?.({ name: "web_search", query: "Chennai weather" });
+                await new Promise<void>((resolve) => {
+                    steps.answer = resolve;
+                });
+                onToken("It is sunny in Chennai.");
+                return {
+                    user_message: {
+                        id: "m1",
+                        conversation_id: "conversation-1",
+                        role: "user",
+                        content: "Weather in Chennai?",
+                        created_at: "2026-01-02T00:00:00Z",
+                    },
+                    assistant_message: {
+                        id: "m2",
+                        conversation_id: "conversation-1",
+                        role: "assistant",
+                        content: "It is sunny in Chennai.",
+                        created_at: "2026-01-02T00:00:01Z",
+                    },
+                };
+            },
+        );
+
+        render(<App />);
+
+        await user.click(await screen.findByRole("button", { name: "Weather" }));
+        await user.type(
+            await screen.findByRole("textbox", { name: "Message" }),
+            "Weather in Chennai?",
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+
+        expect(await screen.findByText("Let me check that.")).toBeTruthy();
+
+        steps.search();
+
+        expect(
+            await screen.findByText("Searching the web for “Chennai weather”…"),
+        ).toBeTruthy();
+        expect(screen.queryByText("Let me check that.")).toBeNull();
+
+        steps.answer();
+
+        expect(await screen.findByText("It is sunny in Chennai.")).toBeTruthy();
+        expect(
+            screen.queryByText("Searching the web for “Chennai weather”…"),
+        ).toBeNull();
     });
 });

@@ -72,6 +72,38 @@ describe("streamMessage", () => {
         );
     });
 
+    it("reports tool calls and keeps streaming until done", async () => {
+        const done = `event: done\ndata: ${JSON.stringify(turn)}\n\n`;
+
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                sseResponse([
+                    'event: token\ndata: {"text": "Let me check."}\n\n',
+                    'event: tool\ndata: {"name": "web_search", "query": "news"}\n\n',
+                    'event: token\ndata: {"text": "Hello there"}\n\n',
+                    done,
+                ]),
+            ),
+        );
+
+        const events: string[] = [];
+        const result = await streamMessage(
+            "token-1",
+            "c1",
+            "Hi",
+            (text) => events.push(`token:${text}`),
+            (call) => events.push(`tool:${call.name}:${call.query}`),
+        );
+
+        expect(events).toEqual([
+            "token:Let me check.",
+            "tool:web_search:news",
+            "token:Hello there",
+        ]);
+        expect(result).toEqual(turn);
+    });
+
     it("rejects with the detail from an error event", async () => {
         vi.stubGlobal(
             "fetch",

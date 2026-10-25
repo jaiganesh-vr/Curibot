@@ -4,12 +4,19 @@ import {
   streamMessage,
   type ChatTurn,
   type Message,
+  type ToolCall,
 } from "../api/client";
 import { getStoredToken } from "../lib/session";
 import type { PendingTurn } from "../types";
 import type { ReportError } from "./useConversations";
 
 export type SendResult = "sent" | "failed" | "signed-out";
+
+function describeToolCall(call: ToolCall): string {
+  return call.name === "web_search"
+    ? `Searching the web for “${call.query}”…`
+    : `Using ${call.name}…`;
+}
 
 interface UseChatOptions {
   // The open conversation; history reloads when it changes.
@@ -108,18 +115,37 @@ export function useChat({
       conversationId: id,
       userContent: content,
       reply: "",
+      activity: null,
+      segment: 0,
       savedTurn: null,
     });
 
     let turn: ChatTurn;
 
     try {
-      turn = await streamMessage(token, id, content, (text) =>
-        setPendingTurn((current) =>
-          current?.conversationId === id
-            ? { ...current, reply: current.reply + text }
-            : current,
-        ),
+      turn = await streamMessage(
+        token,
+        id,
+        content,
+        (text) =>
+          setPendingTurn((current) =>
+            current?.conversationId === id
+              ? { ...current, reply: current.reply + text }
+              : current,
+          ),
+        // Text before a tool call is not part of the answer: drop it and
+        // show what the assistant is doing until the answer streams in.
+        (call) =>
+          setPendingTurn((current) =>
+            current?.conversationId === id
+              ? {
+                  ...current,
+                  reply: "",
+                  activity: describeToolCall(call),
+                  segment: current.segment + 1,
+                }
+              : current,
+          ),
       );
     } catch (err) {
       const signedOut = reportError(

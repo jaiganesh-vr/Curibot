@@ -32,6 +32,8 @@ function nextRevealLength(text: string, shown: number): number {
 
 interface StreamingReplyProps {
   text: string;
+  // Shown instead of "Thinking..." until text arrives, e.g. a web search.
+  activity?: string | null;
   // True once the server has sent the whole reply.
   complete: boolean;
   // Called once, after the complete reply is fully revealed.
@@ -47,6 +49,7 @@ interface StreamingReplyProps {
  */
 function StreamingReply({
   text,
+  activity = null,
   complete,
   onRevealed,
   onGrow,
@@ -93,7 +96,9 @@ function StreamingReply({
         {visibleText ? (
           <MarkdownMessage content={visibleText} />
         ) : (
-          <p className="message-text message-thinking">Thinking...</p>
+          <p className="message-text message-thinking">
+            {activity ?? "Thinking..."}
+          </p>
         )}
       </div>
     </article>

@@ -37,6 +37,12 @@ export interface Message {
     created_at: string;
 }
 
+// A tool the assistant ran mid-reply, e.g. a web search.
+export interface ToolCall {
+    name: string;
+    query: string;
+}
+
 export interface ChatTurn {
     user_message: Message;
     assistant_message: Message;
@@ -206,7 +212,9 @@ export function listMessages(
  * Send a message and stream the assistant reply.
  *
  * The backend responds with Server-Sent Events: "token" events carry pieces
- * of the reply, then "done" carries the saved turn or "error" a failure.
+ * of the reply, "tool" events report a tool the assistant is running (text
+ * streamed before one is not part of the answer), then "done" carries the
+ * saved turn or "error" a failure.
  * EventSource cannot POST or send an Authorization header, so the stream is
  * read and parsed from fetch directly.
  */
@@ -215,6 +223,7 @@ export async function streamMessage(
     conversationId: string,
     content: string,
     onToken: (text: string) => void,
+    onToolCall?: (call: ToolCall) => void,
 ): Promise<ChatTurn> {
     const response = await fetch(
         `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/messages/stream`,
@@ -269,6 +278,8 @@ export async function streamMessage(
 
             if (eventName === "token") {
                 onToken((payload as { text: string }).text);
+            } else if (eventName === "tool") {
+                onToolCall?.(payload as ToolCall);
             } else if (eventName === "done") {
                 await reader.cancel();
                 return payload as ChatTurn;
