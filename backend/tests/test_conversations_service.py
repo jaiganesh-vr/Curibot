@@ -363,8 +363,9 @@ def test_existing_checkpoint_receives_only_new_message(
     assert len(fake_graph.received_messages) == 1
     assert isinstance(fake_graph.received_messages[0], HumanMessage)
     assert fake_graph.received_messages[0].content == "Hello again"
-    assert fake_graph.received_config == {
-        "configurable": {"thread_id": str(conversation.id)}
+    assert fake_graph.received_config is not None
+    assert fake_graph.received_config["configurable"] == {
+        "thread_id": str(conversation.id)
     }
 
 
@@ -835,8 +836,9 @@ def test_stream_message_uses_checkpoint_and_skips_other_nodes(
     assert completed.assistant_message.content == "Hello"
 
     assert [message.content for message in fake_graph.received_messages] == ["Hi again"]
-    assert fake_graph.received_config == {
-        "configurable": {"thread_id": str(conversation.id)}
+    assert fake_graph.received_config is not None
+    assert fake_graph.received_config["configurable"] == {
+        "thread_id": str(conversation.id)
     }
 
 

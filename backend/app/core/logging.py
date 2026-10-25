@@ -124,5 +124,8 @@ def configure_logging(level: str = "INFO", log_format: LogFormat = "text") -> No
 
     # Replaced by our request_completed event, which carries the request ID.
     logging.getLogger("uvicorn.access").disabled = True
-    # Per-request HTTP client lines would be noise (and include URLs).
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Client libraries log full request URLs and, at DEBUG, request bodies
+    # (the Groq SDK logs the messages it sends). Pin them to WARNING so that
+    # LOG_LEVEL=DEBUG never puts conversation content into the logs.
+    for name in ("httpx", "httpcore", "groq", "langsmith", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)

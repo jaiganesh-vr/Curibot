@@ -92,7 +92,7 @@ def create_authenticated_user(email: str) -> tuple[User, dict[str, str]]:
 
 def fake_graph(response: str = "Hello from the fake model"):
     class FakeGraph:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             return {
                 "messages": [
                     *state["messages"],

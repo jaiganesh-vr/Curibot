@@ -84,3 +84,18 @@ def test_log_event_passes_structured_fields(caplog) -> None:  # type: ignore[no-
 
     assert caplog.records[0].getMessage() == "turn_completed"
     assert caplog.records[0].fields == {"tool_calls": 3}
+
+
+def test_client_libraries_stay_quiet_even_at_debug() -> None:
+    from app.core.logging import configure_logging
+
+    root = logging.getLogger()
+    previous_handlers, previous_level = root.handlers[:], root.level
+    try:
+        configure_logging("DEBUG", "json")
+
+        for name in ("httpx", "httpcore", "groq", "langsmith"):
+            assert not logging.getLogger(name).isEnabledFor(logging.INFO)
+        assert logging.getLogger("app").isEnabledFor(logging.DEBUG)
+    finally:
+        root.handlers, root.level = previous_handlers, previous_level

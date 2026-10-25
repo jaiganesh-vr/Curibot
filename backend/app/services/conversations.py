@@ -20,10 +20,11 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.logging import bind_context
+from app.core.logging import bind_context, log_event
 from app.models import Conversation, Message, User
 from app.services.chat_graph import build_chat_graph, is_conversational
 from app.services.memory_tools import MemoryAccess
+from app.services.telemetry import TurnTelemetry
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +332,22 @@ def _persist_turn(
     return user_message, assistant_message
 
 
+def _run_config(turn: _PreparedTurn, telemetry: TurnTelemetry) -> RunnableConfig:
+    """The graph config for a turn, with telemetry attached as a callback."""
+    config: RunnableConfig = dict(turn.config or {})  # type: ignore[assignment]
+    config["callbacks"] = [telemetry]
+    return config
+
+
+def _turn_fields(telemetry: TurnTelemetry, streamed: bool) -> dict[str, Any]:
+    fields = telemetry.summary()
+    fields["streamed"] = streamed
+    fields["limit_reached"] = (
+        fields["tool_rounds"] >= get_settings().web_search_max_rounds
+    )
+    return fields
+
+
 def send_message(
     db: Session,
     user: User,
@@ -341,16 +358,22 @@ def send_message(
 ) -> tuple[Message, Message]:
     """Generate and persist a user/assistant message pair."""
     turn = _prepare_turn(db, user, conversation_id, content, model, checkpointer)
+    telemetry = TurnTelemetry()
 
     try:
-        if turn.config is not None:
-            result = turn.graph.invoke(turn.graph_input, config=turn.config)
-        else:
-            result = turn.graph.invoke(turn.graph_input)
+        result = turn.graph.invoke(
+            turn.graph_input, config=_run_config(turn, telemetry)
+        )
     except Exception as exc:
         db.rollback()
-        logger.exception("Failed to generate chat response")
+        logger.error(
+            "turn_failed",
+            exc_info=True,
+            extra={"fields": _turn_fields(telemetry, streamed=False)},
+        )
         raise ChatGenerationError from exc
+
+    log_event(logger, "turn_completed", **_turn_fields(telemetry, streamed=False))
 
     response_content = result["messages"][-1].content
 
@@ -375,6 +398,7 @@ def stream_message(
     stream leaves the database unchanged.
     """
     turn = _prepare_turn(db, user, conversation_id, content, model, checkpointer)
+    telemetry = TurnTelemetry()
     parts: list[str] = []
     final_answer: str | None = None
 
@@ -386,7 +410,7 @@ def stream_message(
             Iterator[tuple[str, Any]],
             turn.graph.stream(
                 turn.graph_input,
-                config=turn.config,
+                config=_run_config(turn, telemetry),
                 stream_mode=["messages", "updates"],
             ),
         ):
@@ -415,8 +439,14 @@ def stream_message(
                     final_answer = message.content
     except Exception as exc:
         db.rollback()
-        logger.exception("Failed to stream chat response")
+        logger.error(
+            "turn_failed",
+            exc_info=True,
+            extra={"fields": _turn_fields(telemetry, streamed=True)},
+        )
         raise ChatGenerationError from exc
+
+    log_event(logger, "turn_completed", **_turn_fields(telemetry, streamed=True))
 
     # Text streamed before a tool call is not part of the answer, so save
     # the final model reply rather than everything that was streamed.
