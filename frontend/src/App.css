@@ -401,6 +401,7 @@
 
 .connection-status {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   color: var(--color-muted);
@@ -414,8 +415,25 @@
   border-radius: 50%;
 }
 
-.status-dot-online {
+.connection-checking .status-dot {
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-online .status-dot {
   background: #16a34a;
+}
+
+.connection-degraded .status-dot {
+  background: #d97706;
+}
+
+.connection-offline .status-dot {
+  background: #dc2626;
+}
+
+.connection-degraded,
+.connection-offline {
+  color: var(--color-text);
 }
 
 /* The scroll container for the welcome state and message history. */
@@ -916,8 +934,14 @@
     padding: 16px;
   }
 
-  .connection-status {
-    display: none;
+  /* Only the dot shows on small screens; the label stays for screen readers. */
+  .connection-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .chat-content {

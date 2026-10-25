@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, streamMessage } from "./client";
+import { ApiError, checkHealth, streamMessage } from "./client";
 
 function sseResponse(chunks: string[], status = 200): Response {
     const encoder = new TextEncoder();
@@ -120,3 +120,46 @@ describe("streamMessage", () => {
         });
     });
 });
+
+describe("checkHealth", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("calls the root readiness endpoint, outside /api/v1", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(new Response("{}", { status: 200 })),
+        );
+
+        await checkHealth();
+
+        expect(fetch).toHaveBeenCalledWith(
+            expect.stringMatching(/:\/\/[^/]+\/health\/ready$/),
+            expect.objectContaining({ cache: "no-store" }),
+        );
+    });
+
+    it.each([
+        [200, "online"],
+        [503, "degraded"],
+        [500, "degraded"],
+    ])("maps HTTP %i to %s", async (status, expected) => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(new Response("{}", { status })),
+        );
+
+        await expect(checkHealth()).resolves.toBe(expected);
+    });
+
+    it("reports offline when the request fails", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+        );
+
+        await expect(checkHealth()).resolves.toBe("offline");
+    });
+});
+

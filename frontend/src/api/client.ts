@@ -4,6 +4,12 @@ const API_BASE_URL = (
     "http://localhost:8000/api/v1"
 ).replace(/\/+$/, "");
 
+// Health endpoints live at the server root, outside the /api/v1 prefix.
+const HEALTH_URL = `${API_BASE_URL.replace(/\/api\/v1$/, "")}/health/ready`;
+const HEALTH_TIMEOUT_MS = 5000;
+
+export type HealthStatus = "online" | "degraded" | "offline";
+
 export interface TokenResponse {
     access_token: string;
     token_type: "bearer";
@@ -275,5 +281,24 @@ export async function streamMessage(
         if (done) {
             throw new ApiError("The response ended unexpectedly.", 502);
         }
+    }
+}
+
+/**
+ * Check whether the API and its database are reachable.
+ *
+ * "degraded" means the API answered but reported a problem (the readiness
+ * check returns 503 when the database is down); "offline" means no answer.
+ */
+export async function checkHealth(): Promise<HealthStatus> {
+    try {
+        const response = await fetch(HEALTH_URL, {
+            cache: "no-store",
+            signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+        });
+
+        return response.ok ? "online" : "degraded";
+    } catch {
+        return "offline";
     }
 }

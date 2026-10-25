@@ -25,9 +25,20 @@ import {
 } from "./api/client";
 import MarkdownMessage from "./MarkdownMessage";
 import StreamingReply from "./StreamingReply";
+import {
+  useConnectionStatus,
+  type ConnectionStatus,
+} from "./useConnectionStatus";
 import "./App.css";
 
 type AuthMode = "login" | "register";
+
+const CONNECTION_LABELS: Record<ConnectionStatus, string> = {
+  checking: "Connecting…",
+  online: "Connected",
+  degraded: "Database unavailable",
+  offline: "Offline",
+};
 
 const SESSION_EXPIRED_NOTICE = "Your session has expired. Please sign in again.";
 
@@ -81,6 +92,9 @@ function App() {
   const [renameDraft, setRenameDraft] = useState("");
   // The sidebar is an off-canvas drawer on small screens.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const { status: connectionStatus, recheck: recheckConnection } =
+    useConnectionStatus(user !== null);
 
   const chatContentRef = useRef<HTMLDivElement>(null);
   // Lets an in-flight stream check which conversation is open when it ends.
@@ -600,6 +614,9 @@ function App() {
         return;
       }
 
+      // A failed send may mean the backend went away; refresh the indicator.
+      void recheckConnection();
+
       // Restore the failed message unless the user already typed a new one.
       setComposer((current) => (current.trim() ? current : content));
       setChatError(
@@ -941,9 +958,14 @@ function App() {
               </h1>
             </div>
 
-            <span className="connection-status">
-              <span className="status-dot status-dot-online" />
-              API connected
+            <span
+              className={`connection-status connection-${connectionStatus}`}
+              aria-live="polite"
+            >
+              <span className="status-dot" aria-hidden="true" />
+              <span className="connection-label">
+                {CONNECTION_LABELS[connectionStatus]}
+              </span>
             </span>
           </header>
 

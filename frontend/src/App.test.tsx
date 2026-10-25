@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { ApiError } from "./api/client";
 import userEvent from "@testing-library/user-event";
 import {
+    checkHealth,
     createConversation,
     deleteConversation,
     getMe,
@@ -27,6 +28,8 @@ vi.mock("./api/client", () => ({
             this.status = status;
         }
     },
+    // Tests must never reach a real backend for the health indicator.
+    checkHealth: vi.fn(async () => "online"),
     createConversation: vi.fn(),
     deleteConversation: vi.fn(),
     getMe: vi.fn(),
@@ -1465,3 +1468,87 @@ describe("Session restore and expiry", () => {
         expect(screen.queryByRole("status")).toBeNull();
     });
 });
+
+describe("Connection status indicator", () => {
+    function renderWorkspace() {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([
+            {
+                id: "conversation-1",
+                title: "Test conversation",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+            },
+        ]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+
+        render(<App />);
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        vi.mocked(checkHealth).mockImplementation(async () => "online");
+        sessionStorage.clear();
+    });
+
+    it.each([
+        ["online", "Connected"],
+        ["degraded", "Database unavailable"],
+        ["offline", "Offline"],
+    ] as const)("shows %s as %s", async (status, label) => {
+        vi.mocked(checkHealth).mockResolvedValue(status);
+
+        renderWorkspace();
+
+        expect(await screen.findByText(label)).toBeTruthy();
+        expect(
+            document.querySelector(`.connection-status.connection-${status}`),
+        ).toBeTruthy();
+    });
+
+    it("does not check the backend from the login screen", () => {
+        render(<App />);
+
+        expect(checkHealth).not.toHaveBeenCalled();
+    });
+
+    it("rechecks the connection after a message fails to send", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+        expect(await screen.findByText("Connected")).toBeTruthy();
+
+        vi.mocked(checkHealth).mockResolvedValue("offline");
+        vi.mocked(streamMessage).mockRejectedValue(
+            new TypeError("Failed to fetch"),
+        );
+
+        await user.click(
+            screen.getByRole("button", { name: "Test conversation" }),
+        );
+        await user.type(
+            await screen.findByRole("textbox", { name: "Message" }),
+            "Hello",
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+
+        expect(await screen.findByText("Offline")).toBeTruthy();
+    });
+
+    it("switches to Offline when the browser loses its connection", async () => {
+        renderWorkspace();
+        expect(await screen.findByText("Connected")).toBeTruthy();
+
+        window.dispatchEvent(new Event("offline"));
+
+        expect(await screen.findByText("Offline")).toBeTruthy();
+    });
+});
+
