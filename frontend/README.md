@@ -56,13 +56,30 @@ VITE_API_BASE_URL=http://localhost:8000/api/v1
 
 ```text
 src/
-├── App.tsx                 # Workspace and auth screens, app state
-├── App.css                 # Component styles
-├── index.css               # Global styles and colour tokens
-├── api/client.ts           # REST client and SSE stream parser
-├── ConfirmDialog.tsx       # Native <dialog> confirmation
-├── MarkdownMessage.tsx     # Safe Markdown rendering for replies
-├── StreamingReply.tsx      # Paced reveal of a streaming reply
-├── useConnectionStatus.ts  # Backend health polling
-└── test/setup.ts           # Test environment shims
+├── App.tsx                  # Session root: restore, login, or workspace
+├── App.css                  # Component styles
+├── index.css                # Global styles and light/dark colour tokens
+├── types.ts                 # Shared UI types
+├── api/client.ts            # REST client and SSE stream parser
+├── lib/session.ts           # Access-token storage
+├── components/
+│   ├── AuthScreen.tsx       # Sign in and registration
+│   ├── Workspace.tsx        # Signed-in layout; keyed per user
+│   ├── Sidebar.tsx          # Drawer, New chat, account footer
+│   ├── ConversationList.tsx # List, options menu, inline rename
+│   ├── ChatHeader.tsx       # Title, drawer toggle, connection status
+│   ├── MessageList.tsx      # History and the in-flight turn
+│   ├── StreamingReply.tsx   # Paced reveal of a streaming reply
+│   ├── MarkdownMessage.tsx  # Safe Markdown rendering for replies
+│   ├── Composer.tsx         # Message input and send button
+│   ├── ConfirmDialog.tsx    # Native <dialog> confirmation
+│   ├── ThemeSwitcher.tsx    # System / Light / Dark control
+│   └── …                    # Small presentational pieces
+├── hooks/
+│   ├── useConversations.ts  # Conversation list and its actions
+│   ├── useChat.ts           # History loading and streaming sends
+│   ├── useChatScroll.ts     # Auto-scroll and follow-while-reading
+│   ├── useConnectionStatus.ts # Backend health polling
+│   └── useTheme.ts          # Remembered theme choice
+└── test/setup.ts            # Test environment shims
 ```
