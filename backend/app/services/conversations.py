@@ -20,8 +20,10 @@ from langgraph.graph import MessagesState
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import Conversation, Message, User
 from app.services.chat_graph import build_chat_graph
+from app.services.memory_tools import MemoryAccess
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +218,8 @@ def _prepare_turn(
     config: RunnableConfig = {"configurable": {"thread_id": str(conversation_id)}}
 
     try:
-        graph = build_chat_graph(model=model, checkpointer=checkpointer)
+        memory = MemoryAccess(db, user.id) if get_settings().memory_enabled else None
+        graph = build_chat_graph(model=model, checkpointer=checkpointer, memory=memory)
 
         history = db.scalars(
             select(Message)
@@ -413,9 +416,11 @@ def stream_message(
                     continue
                 if message.tool_calls:
                     for call in message.tool_calls:
+                        # The tool's main argument: a search query or a memory.
+                        args = call["args"]
                         yield ToolCallEvent(
                             name=call["name"],
-                            query=str(call["args"].get("query", "")),
+                            query=str(args.get("query") or args.get("memory") or ""),
                         )
                 elif isinstance(message.content, str):
                     final_answer = message.content

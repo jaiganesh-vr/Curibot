@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # Search rounds allowed per question before the model must answer.
     web_search_max_rounds: int = Field(default=3, ge=1, le=5)
 
+    # Long-term memory: the assistant can remember facts about each user
+    # across conversations.
+    memory_enabled: bool = True
+
     @property
     def web_search_enabled(self) -> bool:
         return bool(self.tavily_api_key and self.tavily_api_key.get_secret_value())

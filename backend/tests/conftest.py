@@ -11,12 +11,14 @@ from app.db.base import Base
 
 @pytest.fixture(autouse=True)
 def disable_web_search(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
-    """Keep tests offline even when the developer's .env has a Tavily key.
+    """Keep tests offline and tool-free regardless of the developer's .env.
 
-    An environment variable overrides the .env file; an empty key disables
-    the tool. Tests that need the tool pass one to build_chat_graph directly.
+    Environment variables override the .env file: an empty Tavily key turns
+    web search off, and memory is turned off. Tests that need either pass
+    tools or a MemoryAccess to build_chat_graph directly.
     """
     monkeypatch.setenv("TAVILY_API_KEY", "")
+    monkeypatch.setenv("MEMORY_ENABLED", "false")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

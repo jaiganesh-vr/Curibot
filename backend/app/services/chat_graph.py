@@ -18,6 +18,7 @@ from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.core.config import get_settings
 from app.services.llm import get_chat_model
+from app.services.memory_tools import MemoryAccess, build_memory_tools
 from app.services.prompts import build_system_prompt
 from app.services.tools import get_enabled_tools
 
@@ -73,12 +74,15 @@ def build_chat_graph(
     max_context_tokens: int | None = None,
     tools: Sequence[BaseTool] | None = None,
     max_tool_rounds: int | None = None,
+    memory: MemoryAccess | None = None,
 ) -> Runnable[MessagesState, MessagesState]:
     """Build the conversational graph.
 
     Without tools it is a single model call. With tools it is an agent loop:
     the model either answers or requests tools, the tool node runs them, and
     the results go back to the model, for at most `max_tool_rounds` rounds.
+    With `memory`, the user's remembered facts are added to the prompt and
+    the model gets tools to save and delete them.
     """
     settings = get_settings()
     chat_model = model if model is not None else get_chat_model()
@@ -88,6 +92,9 @@ def build_chat_graph(
         else settings.context_max_tokens
     )
     tool_list = list(tools) if tools is not None else get_enabled_tools()
+    if memory is not None:
+        tool_list.extend(build_memory_tools(memory))
+    web_search = any(t.name == "web_search" for t in tool_list)
     round_limit = (
         max_tool_rounds
         if max_tool_rounds is not None
@@ -106,9 +113,13 @@ def build_chat_graph(
         # The system prompt and trimming apply to the model input only. Graph
         # state, the checkpoint, and the saved history keep every message,
         # and prompt edits apply to existing chats.
+        # Memories are read before every model call, so a fact saved earlier
+        # in the same turn is already visible.
         system_prompt = SystemMessage(
             content=build_system_prompt(
-                datetime.now(UTC).date(), web_search=bool(tool_list)
+                datetime.now(UTC).date(),
+                web_search=web_search,
+                memories=memory.contents() if memory is not None else None,
             )
         )
         history = fit_history_to_budget(state["messages"], context_budget)
