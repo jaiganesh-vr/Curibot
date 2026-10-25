@@ -25,9 +25,9 @@ import type { PendingTurn } from "../types";
 import ChatHeader from "./ChatHeader";
 import Composer from "./Composer";
 import ConfirmDialog from "./ConfirmDialog";
+import ConversationList from "./ConversationList";
 import MessageList from "./MessageList";
-import PlusIcon from "./PlusIcon";
-import ThemeSwitcher from "./ThemeSwitcher";
+import Sidebar from "./Sidebar";
 import WelcomeScreen from "./WelcomeScreen";
 
 // Follow streaming text only while the reader is already near the bottom.
@@ -60,9 +60,8 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
   const [chatError, setChatError] = useState("");
 
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState("");
+  // True while a conversation's options menu or rename box is open.
+  const [listBusy, setListBusy] = useState(false);
   // The sidebar is an off-canvas drawer on small screens.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // The conversation awaiting delete confirmation, if any.
@@ -85,8 +84,6 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   const sidebarCloseRef = useRef<HTMLButtonElement>(null);
   // Latest pending turn for handlers that run after an await.
   const pendingTurnRef = useRef<PendingTurn | null>(null);
-  // Enter, Escape, and blur can all end a rename; only the first one counts.
-  const renameFinishedRef = useRef(false);
 
   const selectedConversation =
     conversations.find(
@@ -257,12 +254,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
   // Close the drawer on Escape, unless a menu or rename handles it first.
   useEffect(() => {
-    if (
-      !sidebarOpen ||
-      openMenuId !== null ||
-      renamingId !== null ||
-      pendingDelete !== null
-    ) {
+    if (!sidebarOpen || listBusy || pendingDelete !== null) {
       return;
     }
 
@@ -275,38 +267,7 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     document.addEventListener("keydown", handleKeyDown);
 
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sidebarOpen, openMenuId, renamingId, pendingDelete]);
-
-  // Close the conversation options menu on an outside click or Escape.
-  useEffect(() => {
-    if (openMenuId === null) {
-      return;
-    }
-
-    function handlePointerDown(event: MouseEvent) {
-      if (
-        !(event.target instanceof Element) ||
-        !event.target.closest("[data-conversation-menu]")
-      ) {
-        setOpenMenuId(null);
-      }
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setOpenMenuId(null);
-      }
-    }
-
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openMenuId]);
-
+  }, [sidebarOpen, listBusy, pendingDelete]);
 
   async function handleNewChat() {
     const token = getStoredToken();
@@ -346,30 +307,10 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     }
   }
 
-  function handleStartRename(conversation: Conversation) {
-    renameFinishedRef.current = false;
-    setOpenMenuId(null);
-    setRenameDraft(conversation.title ?? "");
-    setRenamingId(conversation.id);
-  }
-
-  function handleCancelRename() {
-    renameFinishedRef.current = true;
-    setRenamingId(null);
-  }
-
-  async function handleRenameSubmit(conversation: Conversation) {
-    if (renameFinishedRef.current) {
-      return;
-    }
-
-    renameFinishedRef.current = true;
-    setRenamingId(null);
-
-    const title = renameDraft.trim();
+  async function handleRename(conversation: Conversation, title: string) {
     const token = getStoredToken();
 
-    if (!title || title === conversation.title || !token) {
+    if (!token) {
       return;
     }
 
@@ -411,7 +352,6 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
     trigger: HTMLButtonElement | null,
   ) {
     deleteTriggerRef.current = trigger;
-    setOpenMenuId(null);
     setPendingDelete(conversation);
   }
 
@@ -470,7 +410,6 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
   }
 
   function handleSelectConversation(conversationId: string) {
-    setOpenMenuId(null);
     closeSidebar(false);
 
     if (conversationId === selectedConversationId) {
@@ -625,204 +564,30 @@ function Workspace({ user, onSignOut }: WorkspaceProps) {
 
   return (
     <main className="app-shell">
-      {sidebarOpen && (
-        <div
-          className="sidebar-backdrop"
-          aria-hidden="true"
-          onClick={() => closeSidebar(true)}
-        />
-      )}
-
-      <aside
-        id="sidebar"
-        className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}
-        aria-label="Conversations"
+      <Sidebar
+        user={user}
+        open={sidebarOpen}
+        onClose={() => closeSidebar(true)}
+        closeButtonRef={sidebarCloseRef}
+        creating={creatingConversation}
+        onNewChat={() => void handleNewChat()}
+        error={chatError}
+        loading={workspaceLoading}
+        isEmpty={conversations.length === 0}
+        onSignOut={() => onSignOut()}
       >
-        <div className="sidebar-header">
-          <div className="brand-mark">C</div>
-          <span className="brand-name">Curibot</span>
-          <button
-            ref={sidebarCloseRef}
-            className="sidebar-close"
-            type="button"
-            aria-label="Close conversations"
-            onClick={() => closeSidebar(true)}
-          >
-            ×
-          </button>
-        </div>
-
-        <button
-          className="new-chat-button"
-          type="button"
-          onClick={() => void handleNewChat()}
-          disabled={creatingConversation}
-        >
-          <PlusIcon />
-          {creatingConversation ? "Creating…" : "New chat"}
-        </button>
-
-        <div className="sidebar-section">
-          <p className="section-label">YOUR WORKSPACE</p>
-
-          {chatError && (
-            <p className="auth-message auth-error" role="alert">
-              {chatError}
-            </p>
-          )}
-
-          {workspaceLoading ? (
-            <p className="empty-conversations">
-              Loading conversations...
-            </p>
-          ) : conversations.length === 0 ? (
-            <p className="empty-conversations">
-              No conversations yet. Start a new chat to begin.
-            </p>
-          ) : (
-            <ul className="conversation-list">
-              {conversations.map((conversation) => {
-                const title = conversation.title || "New conversation";
-                const menuOpen = openMenuId === conversation.id;
-
-                return (
-                  <li
-                    key={conversation.id}
-                    className={
-                      menuOpen ? "conversation-row-menu-open" : undefined
-                    }
-                  >
-                    {renamingId === conversation.id ? (
-                      <form
-                        className="conversation-rename"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          void handleRenameSubmit(conversation);
-                        }}
-                      >
-                        <input
-                          aria-label="Conversation title"
-                          value={renameDraft}
-                          maxLength={200}
-                          autoFocus
-                          onFocus={(event) => event.currentTarget.select()}
-                          onChange={(event) =>
-                            setRenameDraft(event.target.value)
-                          }
-                          onBlur={() => void handleRenameSubmit(conversation)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              handleCancelRename();
-                            }
-                          }}
-                        />
-                      </form>
-                    ) : (
-                      <>
-                        <button
-                          className={`conversation-item ${conversation.id === selectedConversationId
-                            ? "conversation-item-active"
-                            : ""
-                            }`}
-                          type="button"
-                          onClick={() =>
-                            handleSelectConversation(conversation.id)
-                          }
-                          aria-current={
-                            conversation.id === selectedConversationId
-                              ? "page"
-                              : undefined
-                          }
-                        >
-                          {title}
-                        </button>
-
-                        <div
-                          className="conversation-actions"
-                          data-conversation-menu
-                        >
-                          <button
-                            className="conversation-menu-button"
-                            type="button"
-                            aria-label={`Options for ${title}`}
-                            aria-haspopup="menu"
-                            aria-expanded={menuOpen}
-                            onClick={() =>
-                              setOpenMenuId(
-                                menuOpen ? null : conversation.id,
-                              )
-                            }
-                          >
-                            <span className="conversation-menu-dot" />
-                            <span className="conversation-menu-dot" />
-                            <span className="conversation-menu-dot" />
-                          </button>
-
-                          {menuOpen && (
-                            <div className="conversation-menu" role="menu">
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() =>
-                                  handleStartRename(conversation)
-                                }
-                              >
-                                Rename
-                              </button>
-                              <button
-                                className="conversation-menu-danger"
-                                type="button"
-                                role="menuitem"
-                                disabled={
-                                  sending &&
-                                  conversation.id === selectedConversationId
-                                }
-                                onClick={(event) =>
-                                  handleDeleteConversation(
-                                    conversation,
-                                    event.currentTarget
-                                      .closest("[data-conversation-menu]")
-                                      ?.querySelector<HTMLButtonElement>(
-                                        ".conversation-menu-button",
-                                      ) ?? null,
-                                  )
-                                }
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-
-        <ThemeSwitcher />
-
-        <div className="sidebar-footer">
-          <div className="avatar">
-            {user.email.charAt(0).toUpperCase()}
-          </div>
-
-          <div className="user-info">
-            <span className="user-name">{user.email}</span>
-            <span className="user-status">Signed in</span>
-          </div>
-
-          <button
-            className="logout-button"
-            type="button"
-            onClick={() => onSignOut()}
-          >
-            Log out
-          </button>
-        </div>
-      </aside>
+        <ConversationList
+          conversations={conversations}
+          selectedId={selectedConversationId}
+          deleteDisabledId={sending ? selectedConversationId : null}
+          onSelect={handleSelectConversation}
+          onRename={(conversation, title) =>
+            void handleRename(conversation, title)
+          }
+          onRequestDelete={handleDeleteConversation}
+          onBusyChange={setListBusy}
+        />
+      </Sidebar>
 
       <section className="chat-panel">
         <ChatHeader
