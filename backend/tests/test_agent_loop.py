@@ -45,8 +45,9 @@ def search_call(query: str, call_id: str = "call-1") -> AIMessage:
 class ScriptedToolModel(BaseChatModel):
     """Replies from a script and records what each call received.
 
-    When tools are bound with tool_choice="none" it must answer, so it
-    returns `forced_answer` instead of the next scripted reply.
+    Called without tools bound, it cannot request a tool, so it returns
+    `forced_answer` when the next scripted reply is a tool call (or the
+    script has run out).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -55,18 +56,21 @@ class ScriptedToolModel(BaseChatModel):
     forced_answer: str = "Final answer without more searching."
     calls: list[list[BaseMessage]] = []
     tool_choices: list[Any] = []
+    tools_bound: list[bool] = []
 
     @property
     def _llm_type(self) -> str:
         return "scripted-tool-model"
 
     def bind_tools(self, tools, *, tool_choice=None, **kwargs):  # type: ignore[no-untyped-def,override]
-        return self.bind(tool_choice=tool_choice)
+        return self.bind(tool_choice=tool_choice, has_tools=True)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # type: ignore[no-untyped-def]
         self.calls.append(list(messages))
         self.tool_choices.append(kwargs.get("tool_choice"))
-        if kwargs.get("tool_choice") == "none":
+        has_tools = bool(kwargs.get("has_tools"))
+        self.tools_bound.append(has_tools)
+        if not has_tools and (not self.script or self.script[0].tool_calls):
             reply = AIMessage(content=self.forced_answer)
         else:
             reply = self.script.pop(0)
@@ -106,6 +110,7 @@ def test_searches_then_answers_with_the_results() -> None:
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(model=model, tools=[make_search_tool(queries)])
 
@@ -129,12 +134,19 @@ def test_searches_then_answers_with_the_results() -> None:
     assert "Result for Groq news October 2026" in second_call[-1].content
 
 
-def test_round_limit_forces_an_answer() -> None:
+def test_round_limit_forces_an_answer_without_tools_bound() -> None:
+    """Regression: gpt-oss ignored tool_choice="none" and Groq rejected it.
+
+    At the limit the model is called with no tools bound at all, the turn's
+    results are moved into the system prompt, and tool steps are left out.
+    """
     queries: list[str] = []
     model = ScriptedToolModel(
-        script=[search_call("first", "c1"), search_call("second", "c2")],
+        # A model that would keep searching forever if allowed to.
+        script=[search_call(f"query {n}", f"c{n}") for n in range(1, 10)],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(
         model=model, tools=[make_search_tool(queries)], max_tool_rounds=2
@@ -142,9 +154,16 @@ def test_round_limit_forces_an_answer() -> None:
 
     result = graph.invoke({"messages": [HumanMessage("Keep searching")]})
 
-    assert queries == ["first", "second"]
-    assert model.tool_choices == [None, None, "none"]
+    assert queries == ["query 1", "query 2"]
+    assert model.tools_bound == [True, True, False]
+    assert "none" not in model.tool_choices
     assert result["messages"][-1].content == model.forced_answer
+
+    final_call = model.calls[-1]
+    assert "used all the tool calls" in final_call[0].content
+    assert "Result for query 1" in final_call[0].content
+    assert "Result for query 2" in final_call[0].content
+    assert [type(m) for m in final_call[1:]] == [HumanMessage]
 
 
 def test_tool_failure_is_reported_to_the_model_not_raised() -> None:
@@ -153,6 +172,7 @@ def test_tool_failure_is_reported_to_the_model_not_raised() -> None:
         script=[search_call("anything"), AIMessage("I couldn't search right now.")],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(model=model, tools=[make_search_tool(queries, fail=True)])
 
@@ -203,6 +223,7 @@ def test_stream_reports_the_search_and_saves_only_the_final_answer(
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     search_tool = make_search_tool(queries)
     monkeypatch.setattr(
@@ -248,6 +269,7 @@ def test_checkpoint_with_tool_steps_is_reused_on_the_next_turn(
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     search_tool = make_search_tool(queries)
     saver = InMemorySaver()

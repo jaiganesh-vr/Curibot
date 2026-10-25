@@ -12,7 +12,6 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
-    ToolMessage,
 )
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -22,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import Conversation, Message, User
-from app.services.chat_graph import build_chat_graph
+from app.services.chat_graph import build_chat_graph, is_conversational
 from app.services.memory_tools import MemoryAccess
 
 logger = logging.getLogger(__name__)
@@ -64,18 +63,6 @@ class CompletedEvent:
 
 
 StreamEvent = TokenEvent | ToolCallEvent | CompletedEvent
-
-
-def is_conversational(message: BaseMessage) -> bool:
-    """Whether a message belongs to the visible transcript.
-
-    Tool requests and tool results live in the LangGraph checkpoint so later
-    turns can use them, but only user messages and final answers are saved
-    to the database.
-    """
-    if isinstance(message, ToolMessage):
-        return False
-    return not (isinstance(message, AIMessage) and message.tool_calls)
 
 
 def derive_title(content: str) -> str | None:

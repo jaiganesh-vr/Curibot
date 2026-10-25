@@ -64,6 +64,7 @@ def test_saved_memory_is_visible_later_in_the_same_turn(db_session: Session) -> 
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(
         model=model, tools=[], memory=MemoryAccess(db_session, user.id)
@@ -88,6 +89,7 @@ def test_delete_memory_by_number(db_session: Session) -> None:
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(
         model=model, tools=[], memory=MemoryAccess(db_session, user.id)
@@ -126,6 +128,7 @@ def test_memories_carry_over_to_a_new_conversation(
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     enable_memory(monkeypatch, model)
     user = create_user(db_session)
@@ -149,6 +152,7 @@ def test_stream_reports_saving_a_memory(
         ],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     enable_memory(monkeypatch, model)
     user = create_user(db_session)
@@ -178,6 +182,7 @@ def test_memory_saved_in_a_failed_turn_is_rolled_back(
         script=[tool_call("save_memory", {"memory": "Should not persist"})],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     enable_memory(monkeypatch, model)
     user = create_user(db_session)

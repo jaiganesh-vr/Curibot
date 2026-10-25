@@ -610,6 +610,7 @@ def test_stream_message_sends_tool_event_before_the_answer() -> None:
         script=[search_call("weather Chennai"), AIMessage("Sunny today.")],
         calls=[],
         tool_choices=[],
+        tools_bound=[],
     )
     graph = build_chat_graph(model=model, tools=[web_search])
 
