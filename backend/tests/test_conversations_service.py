@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import ConfigDict
 from sqlalchemy import select
@@ -163,12 +163,15 @@ def test_send_message_includes_prior_history(
         model=model,
     )
 
-    assert len(model.received_messages) == 3
-    assert isinstance(model.received_messages[0], HumanMessage)
-    assert model.received_messages[0].content == "My name is Sam."
-    assert isinstance(model.received_messages[1], AIMessage)
-    assert model.received_messages[1].content == "Nice to meet you, Sam."
-    assert model.received_messages[2].content == "What is my name?"
+    # The system prompt comes first, followed by the full history.
+    assert len(model.received_messages) == 4
+    assert isinstance(model.received_messages[0], SystemMessage)
+    assert "Curibot" in model.received_messages[0].content
+    assert isinstance(model.received_messages[1], HumanMessage)
+    assert model.received_messages[1].content == "My name is Sam."
+    assert isinstance(model.received_messages[2], AIMessage)
+    assert model.received_messages[2].content == "Nice to meet you, Sam."
+    assert model.received_messages[3].content == "What is my name?"
 
 
 def test_send_message_rejects_missing_conversation(
