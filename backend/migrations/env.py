@@ -1,10 +1,11 @@
-from logging.config import fileConfig
+import logging
 from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.db.base import Base
 from app.models import User  # noqa: F401
 
@@ -20,10 +21,10 @@ config.set_main_option(
 )
 
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Use the app's logging setup rather than alembic.ini's, so migration output
+# matches LOG_FORMAT (JSON lines in Docker, readable text locally).
+configure_logging(get_settings().log_level, get_settings().log_format)
+logging.getLogger("alembic").setLevel(logging.INFO)
 
 # add your model's MetaData object here
 # for 'autogenerate' support

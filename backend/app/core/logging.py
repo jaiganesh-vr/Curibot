@@ -26,10 +26,12 @@ _request_context: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 # Attributes every LogRecord has; anything else came from `extra`.
+# uvicorn's color_message duplicates the message with terminal colour codes.
 _STANDARD_ATTRS = set(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {
     "message",
     "asctime",
     "taskName",
+    "color_message",
 }
 
 

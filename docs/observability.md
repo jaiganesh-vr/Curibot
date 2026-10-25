@@ -36,18 +36,21 @@ fields plus the traceback.
 
 ### Querying
 
+`fromjson?` skips any line that is not JSON, so the queries keep working
+even if a library prints plain text.
+
 ```bash
 # Agent turns, newest last
-docker compose logs backend --no-log-prefix | jq 'select(.event=="turn_completed")'
+docker compose logs backend --no-log-prefix | jq -R 'fromjson? | select(.event=="turn_completed")'
 
 # Everything for one request (copy X-Request-ID from the browser's network tab)
-docker compose logs backend --no-log-prefix | jq 'select(.request_id=="<id>")'
+docker compose logs backend --no-log-prefix | jq -R 'fromjson? | select(.request_id=="<id>")'
 
 # Turns that hit the tool round limit, and failures
-docker compose logs backend --no-log-prefix | jq 'select(.limit_reached==true or .event=="turn_failed")'
+docker compose logs backend --no-log-prefix | jq -R 'fromjson? | select(.limit_reached==true or .event=="turn_failed")'
 
 # Token usage per turn
-docker compose logs backend --no-log-prefix | jq -c 'select(.event=="turn_completed") | {request_id, tokens}'
+docker compose logs backend --no-log-prefix | jq -cR 'fromjson? | select(.event=="turn_completed") | {request_id, tokens}'
 ```
 
 ### Privacy
