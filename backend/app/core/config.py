@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     # older messages are left out. Keep well below the model's context window
     # to leave room for the system prompt and the reply.
     context_max_tokens: int = Field(default=16_000, ge=1_000)
+    # Web search via Tavily. Without an API key the tool is disabled and the
+    # assistant answers from the model alone.
+    tavily_api_key: SecretStr | None = None
+    web_search_max_results: int = Field(default=5, ge=1, le=10)
+    # Search rounds allowed per question before the model must answer.
+    web_search_max_rounds: int = Field(default=3, ge=1, le=5)
+
+    @property
+    def web_search_enabled(self) -> bool:
+        return bool(self.tavily_api_key and self.tavily_api_key.get_secret_value())
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":

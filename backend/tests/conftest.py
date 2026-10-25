@@ -5,7 +5,21 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from app.core.config import get_settings
 from app.db.base import Base
+
+
+@pytest.fixture(autouse=True)
+def disable_web_search(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Keep tests offline even when the developer's .env has a Tavily key.
+
+    An environment variable overrides the .env file; an empty key disables
+    the tool. Tests that need the tool pass one to build_chat_graph directly.
+    """
+    monkeypatch.setenv("TAVILY_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
