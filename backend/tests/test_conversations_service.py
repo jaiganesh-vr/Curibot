@@ -17,6 +17,8 @@ from app.services.conversations import (
     ChatGenerationError,
     ConversationNotFoundError,
     create_conversation,
+    delete_conversation,
+    rename_conversation,
     send_message,
 )
 from tests.test_conversation_persistence import (
@@ -87,6 +89,36 @@ def test_send_message_persists_user_and_assistant(
         "user",
         "assistant",
     ]
+
+
+def test_first_message_sets_title_and_updates_activity(
+    db_session: Session,
+) -> None:
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    _, assistant_message = send_message(
+        db_session,
+        user,
+        conversation.id,
+        "  Plan a   trip\nto Japan " + "x" * 100,
+        model=FakeChatModel(),
+    )
+    db_session.refresh(conversation)
+
+    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:60]
+    assert conversation.updated_at == assistant_message.created_at
+
+    send_message(
+        db_session,
+        user,
+        conversation.id,
+        "A different follow-up",
+        model=FakeChatModel(),
+    )
+    db_session.refresh(conversation)
+
+    assert conversation.title == ("Plan a trip to Japan " + "x" * 100)[:60]
 
 
 def test_send_message_includes_prior_history(
@@ -601,3 +633,208 @@ def test_commit_failure_discards_stale_checkpoint_on_retry(
     ]
     assert user_message.content == "Retry question"
     assert assistant_message.content == "Generated answer"
+
+
+def test_rename_keeps_activity_ordering(db_session: Session) -> None:
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+    original_updated_at = conversation.updated_at
+
+    renamed = rename_conversation(db_session, user, conversation.id, "Renamed")
+
+    assert renamed.title == "Renamed"
+    assert renamed.updated_at == original_updated_at
+
+
+def test_delete_conversation_removes_messages_and_checkpoint(
+    db_session: Session,
+) -> None:
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+    send_message(db_session, user, conversation.id, "Hi", model=FakeChatModel())
+
+    class FakeCheckpointer:
+        def __init__(self) -> None:
+            self.deleted_threads: list[str] = []
+
+        def delete_thread(self, thread_id: str) -> None:
+            self.deleted_threads.append(thread_id)
+
+    checkpointer = FakeCheckpointer()
+    delete_conversation(
+        db_session,
+        user,
+        conversation.id,
+        checkpointer=checkpointer,  # type: ignore[arg-type]
+    )
+
+    assert db_session.scalars(select(Message)).all() == []
+    assert checkpointer.deleted_threads == [str(conversation.id)]
+
+    with pytest.raises(ConversationNotFoundError):
+        delete_conversation(db_session, user, conversation.id)
+
+
+def test_delete_conversation_tolerates_checkpoint_failure(
+    db_session: Session,
+) -> None:
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    class FailingCheckpointer:
+        def delete_thread(self, thread_id: str) -> None:
+            raise RuntimeError("checkpoint store unavailable")
+
+    delete_conversation(
+        db_session,
+        user,
+        conversation.id,
+        checkpointer=FailingCheckpointer(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(ConversationNotFoundError):
+        delete_conversation(db_session, user, conversation.id)
+
+
+def test_stream_message_yields_tokens_then_persists_turn(
+    db_session: Session,
+) -> None:
+    from langchain_core.language_models.fake_chat_models import (
+        GenericFakeChatModel,
+    )
+
+    from app.services.conversations import CompletedEvent, TokenEvent, stream_message
+
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+    model = GenericFakeChatModel(messages=iter([AIMessage(content="Hello there")]))
+
+    events = list(stream_message(db_session, user, conversation.id, "Hi", model=model))
+
+    tokens = [event.text for event in events if isinstance(event, TokenEvent)]
+    assert len(tokens) > 1
+    assert "".join(tokens) == "Hello there"
+
+    completed = events[-1]
+    assert isinstance(completed, CompletedEvent)
+    assert completed.user_message.content == "Hi"
+    assert completed.assistant_message.content == "Hello there"
+
+    db_session.refresh(conversation)
+    assert conversation.title == "Hi"
+    assert len(db_session.scalars(select(Message)).all()) == 2
+
+
+def test_stream_message_failure_persists_nothing(db_session: Session) -> None:
+    from app.services.conversations import stream_message
+
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    class FailingModel(FakeChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            raise RuntimeError("model unavailable")
+
+    with pytest.raises(ChatGenerationError):
+        list(
+            stream_message(
+                db_session, user, conversation.id, "Hi", model=FailingModel()
+            )
+        )
+
+    assert db_session.scalars(select(Message)).all() == []
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("Hello", "Hello"),
+        ("  Plan a   trip\nto Japan\t", "Plan a trip to Japan"),
+        ("x" * 80, "x" * 60),
+        ("   \n\t ", None),
+    ],
+)
+def test_derive_title(content: str, expected: str | None) -> None:
+    from app.services.conversations import derive_title
+
+    assert derive_title(content) == expected
+
+
+def test_stream_message_uses_checkpoint_and_skips_other_nodes(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.messages import AIMessageChunk
+
+    from app.services.conversations import CompletedEvent, TokenEvent, stream_message
+
+    user = create_user(db_session)
+    conversation = create_conversation(db_session, user)
+
+    class FakeCheckpointer:
+        def get_tuple(self, config: dict[str, Any]) -> SimpleNamespace:
+            return SimpleNamespace(checkpoint={"channel_values": {"messages": []}})
+
+        def delete_thread(self, thread_id: str) -> None:
+            raise AssertionError("A consistent checkpoint should not be deleted")
+
+    class FakeStreamingGraph:
+        received_messages: list[Any] = []
+        received_config: dict[str, Any] | None = None
+
+        def stream(
+            self,
+            state: dict[str, Any],
+            config: dict[str, Any] | None = None,
+            stream_mode: str | None = None,
+        ) -> Any:
+            assert stream_mode == "messages"
+            self.received_messages = list(state["messages"])
+            self.received_config = config
+            yield AIMessageChunk(content="ignored"), {"langgraph_node": "other"}
+            yield AIMessageChunk(content="Hel"), {"langgraph_node": "call_model"}
+            yield AIMessageChunk(content=""), {"langgraph_node": "call_model"}
+            yield AIMessageChunk(content="lo"), {"langgraph_node": "call_model"}
+
+    fake_graph = FakeStreamingGraph()
+    monkeypatch.setattr(
+        "app.services.conversations.build_chat_graph",
+        lambda **kwargs: fake_graph,
+    )
+
+    events = list(
+        stream_message(
+            db_session,
+            user,
+            conversation.id,
+            "Hi again",
+            checkpointer=FakeCheckpointer(),  # type: ignore[arg-type]
+        )
+    )
+
+    assert [e.text for e in events if isinstance(e, TokenEvent)] == ["Hel", "lo"]
+    completed = events[-1]
+    assert isinstance(completed, CompletedEvent)
+    assert completed.assistant_message.content == "Hello"
+
+    assert [message.content for message in fake_graph.received_messages] == ["Hi again"]
+    assert fake_graph.received_config == {
+        "configurable": {"thread_id": str(conversation.id)}
+    }
+
+
+def test_stream_message_rejects_another_users_conversation(
+    db_session: Session,
+) -> None:
+    from app.services.conversations import stream_message
+
+    owner = create_user(db_session)
+    other = create_user(db_session, email="other@example.com")
+    conversation = create_conversation(db_session, owner)
+
+    with pytest.raises(ConversationNotFoundError):
+        list(
+            stream_message(
+                db_session, other, conversation.id, "Hi", model=FakeChatModel()
+            )
+        )

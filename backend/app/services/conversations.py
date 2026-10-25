@@ -1,24 +1,30 @@
 import logging
+from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
+    BaseMessage,
     HumanMessage,
     SystemMessage,
 )
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import MessagesState
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import Conversation, Message, User
 from app.services.chat_graph import build_chat_graph
 
 logger = logging.getLogger(__name__)
+
+TITLE_MAX_LENGTH = 60
 
 
 class ConversationNotFoundError(Exception):
@@ -27,6 +33,30 @@ class ConversationNotFoundError(Exception):
 
 class ChatGenerationError(Exception):
     """Raised when the LLM cannot generate a response."""
+
+
+@dataclass(frozen=True)
+class TokenEvent:
+    """A piece of assistant text produced while streaming."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class CompletedEvent:
+    """The persisted user/assistant pair once streaming finishes."""
+
+    user_message: Message
+    assistant_message: Message
+
+
+StreamEvent = TokenEvent | CompletedEvent
+
+
+def derive_title(content: str) -> str | None:
+    """Build a conversation title from the first user message."""
+    title = " ".join(content.split())[:TITLE_MAX_LENGTH]
+    return title or None
 
 
 def create_conversation(
@@ -48,15 +78,93 @@ def create_conversation(
     return conversation
 
 
-def send_message(
+def get_owned_conversation(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+) -> Conversation:
+    """Return a conversation owned by the user or raise not found."""
+    conversation = db.scalar(
+        select(Conversation).where(
+            Conversation.id == conversation_id,
+            Conversation.user_id == user.id,
+        )
+    )
+
+    if conversation is None:
+        raise ConversationNotFoundError
+
+    return conversation
+
+
+def rename_conversation(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+    title: str,
+) -> Conversation:
+    """Rename a conversation without changing its activity ordering."""
+    conversation = get_owned_conversation(db, user, conversation_id)
+
+    # Assigning updated_at to itself suppresses the column's onupdate, so a
+    # rename does not move the conversation to the top of the list.
+    db.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation.id)
+        .values(title=title, updated_at=Conversation.updated_at)
+    )
+
+    try:
+        db.commit()
+        db.refresh(conversation)
+    except Exception:
+        db.rollback()
+        raise
+
+    return conversation
+
+
+def delete_conversation(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+) -> None:
+    """Delete a conversation, its messages, and its LangGraph checkpoint."""
+    conversation = get_owned_conversation(db, user, conversation_id)
+    db.delete(conversation)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    if checkpointer is not None:
+        try:
+            checkpointer.delete_thread(str(conversation_id))
+        except Exception:
+            # The database rows are gone; an orphaned checkpoint is harmless.
+            logger.exception("Failed to delete checkpoint thread")
+
+
+@dataclass(frozen=True)
+class _PreparedTurn:
+    conversation: Conversation
+    graph: Runnable[MessagesState, MessagesState]
+    graph_input: MessagesState
+    config: RunnableConfig | None
+
+
+def _prepare_turn(
     db: Session,
     user: User,
     conversation_id: UUID,
     content: str,
-    model: BaseChatModel | None = None,
-    checkpointer: BaseCheckpointSaver[str] | None = None,
-) -> tuple[Message, Message]:
-    """Generate and persist a user/assistant message pair."""
+    model: BaseChatModel | None,
+    checkpointer: BaseCheckpointSaver[str] | None,
+) -> _PreparedTurn:
+    """Lock the conversation and build the graph input for a new user turn."""
     conversation = db.scalar(
         select(Conversation)
         .where(
@@ -139,13 +247,76 @@ def send_message(
                 HumanMessage(content=content),
             ]
 
-        graph_input: MessagesState = {"messages": graph_messages}
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to prepare chat turn")
+        raise ChatGenerationError from exc
 
-        if checkpointer is not None:
-            result = graph.invoke(graph_input, config=config)
+    return _PreparedTurn(
+        conversation=conversation,
+        graph=graph,
+        graph_input={"messages": graph_messages},
+        config=config if checkpointer is not None else None,
+    )
+
+
+def _persist_turn(
+    db: Session,
+    conversation: Conversation,
+    content: str,
+    response_content: str,
+) -> tuple[Message, Message]:
+    """Save the user/assistant pair and update the conversation metadata."""
+    # Assign ordered timestamps so the user turn precedes its assistant reply.
+    user_created_at = datetime.now(UTC)
+    assistant_created_at = user_created_at + timedelta(microseconds=1)
+
+    user_message = Message(
+        conversation_id=conversation.id,
+        role="user",
+        content=content,
+        created_at=user_created_at,
+    )
+    assistant_message = Message(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=response_content,
+        created_at=assistant_created_at,
+    )
+
+    db.add_all([user_message, assistant_message])
+
+    if conversation.title is None:
+        conversation.title = derive_title(content)
+    conversation.updated_at = assistant_created_at
+
+    try:
+        db.commit()
+        db.refresh(user_message)
+        db.refresh(assistant_message)
+    except Exception:
+        db.rollback()
+        raise
+
+    return user_message, assistant_message
+
+
+def send_message(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+    content: str,
+    model: BaseChatModel | None = None,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+) -> tuple[Message, Message]:
+    """Generate and persist a user/assistant message pair."""
+    turn = _prepare_turn(db, user, conversation_id, content, model, checkpointer)
+
+    try:
+        if turn.config is not None:
+            result = turn.graph.invoke(turn.graph_input, config=turn.config)
         else:
-            result = graph.invoke(graph_input)
-
+            result = turn.graph.invoke(turn.graph_input)
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to generate chat response")
@@ -157,31 +328,47 @@ def send_message(
         db.rollback()
         raise ChatGenerationError("The model returned a non-text response.")
 
-    # Assign ordered timestamps so the user turn precedes its assistant reply.
-    user_created_at = datetime.now(UTC)
-    assistant_created_at = user_created_at + timedelta(microseconds=1)
+    return _persist_turn(db, turn.conversation, content, response_content)
 
-    user_message = Message(
-        conversation_id=conversation_id,
-        role="user",
-        content=content,
-        created_at=user_created_at,
-    )
-    assistant_message = Message(
-        conversation_id=conversation_id,
-        role="assistant",
-        content=response_content,
-        created_at=assistant_created_at,
-    )
 
-    db.add_all([user_message, assistant_message])
+def stream_message(
+    db: Session,
+    user: User,
+    conversation_id: UUID,
+    content: str,
+    model: BaseChatModel | None = None,
+    checkpointer: BaseCheckpointSaver[str] | None = None,
+) -> Iterator[StreamEvent]:
+    """Stream assistant text as it is generated, then persist the turn.
+
+    Messages are saved only after the model finishes, so an interrupted
+    stream leaves the database unchanged.
+    """
+    turn = _prepare_turn(db, user, conversation_id, content, model, checkpointer)
+    parts: list[str] = []
 
     try:
-        db.commit()
-        db.refresh(user_message)
-        db.refresh(assistant_message)
-    except Exception:
+        for item in turn.graph.stream(
+            turn.graph_input,
+            config=turn.config,
+            stream_mode="messages",
+        ):
+            # The "messages" mode yields (message chunk, metadata) pairs.
+            chunk, metadata = cast(tuple[BaseMessage, dict[str, Any]], item)
+            if metadata.get("langgraph_node") != "call_model":
+                continue
+            if isinstance(chunk.content, str) and chunk.content:
+                parts.append(chunk.content)
+                yield TokenEvent(text=chunk.content)
+    except Exception as exc:
         db.rollback()
-        raise
+        logger.exception("Failed to stream chat response")
+        raise ChatGenerationError from exc
 
-    return user_message, assistant_message
+    user_message, assistant_message = _persist_turn(
+        db, turn.conversation, content, "".join(parts)
+    )
+    yield CompletedEvent(
+        user_message=user_message,
+        assistant_message=assistant_message,
+    )

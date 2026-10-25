@@ -1,11 +1,19 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 
 class ConversationCreateRequest(BaseModel):
     title: str | None = Field(default=None, max_length=200)
+
+
+class ConversationUpdateRequest(BaseModel):
+    title: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+    ]
 
 
 class ConversationResponse(BaseModel):
