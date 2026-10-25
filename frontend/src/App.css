@@ -1208,6 +1208,95 @@
   }
 }
 
+/* --- Confirmation dialog --- */
+
+.confirm-dialog {
+  width: min(400px, calc(100% - 32px));
+  max-width: none;
+  padding: 0;
+  color: var(--color-text);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgb(15 23 42 / 25%);
+}
+
+.confirm-dialog[open] {
+  animation: dialog-enter 160ms ease-out;
+}
+
+.confirm-dialog::backdrop {
+  background: rgb(15 23 42 / 40%);
+}
+
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* Padding lives here so clicks inside never count as backdrop clicks. */
+.confirm-dialog-body {
+  padding: 24px;
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+.confirm-dialog p {
+  margin: 10px 0 0;
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.confirm-dialog p strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.dialog-button {
+  height: 38px;
+  padding: 0 16px;
+  color: var(--color-text);
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.dialog-button:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.dialog-button-danger {
+  color: #fff;
+  background: #dc2626;
+  border-color: #dc2626;
+}
+
+.dialog-button-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 /* --- Accessibility --- */
 
 @media (prefers-reduced-motion: reduce) {

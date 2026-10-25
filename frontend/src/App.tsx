@@ -23,6 +23,7 @@ import {
   type Message,
   type User,
 } from "./api/client";
+import ConfirmDialog from "./ConfirmDialog";
 import MarkdownMessage from "./MarkdownMessage";
 import StreamingReply from "./StreamingReply";
 import {
@@ -110,6 +111,14 @@ function App() {
   const [renameDraft, setRenameDraft] = useState("");
   // The sidebar is an off-canvas drawer on small screens.
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The conversation awaiting delete confirmation, if any.
+  const [pendingDelete, setPendingDelete] = useState<Conversation | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
+  // The options button that opened the dialog; the menu item itself is gone
+  // by the time the dialog closes, so focus returns here instead.
+  const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
 
   const { status: connectionStatus, recheck: recheckConnection } =
     useConnectionStatus(user !== null);
@@ -338,7 +347,12 @@ function App() {
 
   // Close the drawer on Escape, unless a menu or rename handles it first.
   useEffect(() => {
-    if (!sidebarOpen || openMenuId !== null || renamingId !== null) {
+    if (
+      !sidebarOpen ||
+      openMenuId !== null ||
+      renamingId !== null ||
+      pendingDelete !== null
+    ) {
       return;
     }
 
@@ -351,7 +365,7 @@ function App() {
     document.addEventListener("keydown", handleKeyDown);
 
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [sidebarOpen, openMenuId, renamingId]);
+  }, [sidebarOpen, openMenuId, renamingId, pendingDelete]);
 
   // Close the conversation options menu on an outside click or Escape.
   useEffect(() => {
@@ -520,19 +534,31 @@ function App() {
     }
   }
 
-  async function handleDeleteConversation(conversation: Conversation) {
+  function handleDeleteConversation(
+    conversation: Conversation,
+    trigger: HTMLButtonElement | null,
+  ) {
+    deleteTriggerRef.current = trigger;
     setOpenMenuId(null);
+    setPendingDelete(conversation);
+  }
 
-    const prompt = conversation.title
-      ? `Delete "${conversation.title}"? This cannot be undone.`
-      : "Delete this conversation? This cannot be undone.";
+  function handleCancelDelete() {
+    setPendingDelete(null);
+    deleteTriggerRef.current?.focus();
+  }
+
+  async function handleConfirmDelete() {
+    const conversation = pendingDelete;
     const token = getStoredToken();
 
-    if (!token || !window.confirm(prompt)) {
+    if (!conversation || !token) {
+      setPendingDelete(null);
       return;
     }
 
     setChatError("");
+    setDeleting(true);
 
     try {
       await deleteConversation(token, conversation.id);
@@ -556,6 +582,10 @@ function App() {
           ? err.message
           : "Unable to delete the conversation.",
       );
+      deleteTriggerRef.current?.focus();
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
     }
   }
 
@@ -733,6 +763,8 @@ function App() {
     setOpenMenuId(null);
     setRenamingId(null);
     setSidebarOpen(false);
+    setPendingDelete(null);
+    setDeleting(false);
     setMode("login");
   }
 
@@ -915,8 +947,15 @@ function App() {
                                     sending &&
                                     conversation.id === selectedConversationId
                                   }
-                                  onClick={() =>
-                                    void handleDeleteConversation(conversation)
+                                  onClick={(event) =>
+                                    handleDeleteConversation(
+                                      conversation,
+                                      event.currentTarget
+                                        .closest("[data-conversation-menu]")
+                                        ?.querySelector<HTMLButtonElement>(
+                                          ".conversation-menu-button",
+                                        ) ?? null,
+                                    )
                                   }
                                 >
                                   Delete
@@ -1130,6 +1169,25 @@ function App() {
             </>
           )}
         </section>
+
+        <ConfirmDialog
+          open={pendingDelete !== null}
+          title="Delete conversation?"
+          confirmLabel="Delete"
+          busyLabel="Deleting…"
+          busy={deleting}
+          onConfirm={() => void handleConfirmDelete()}
+          onCancel={handleCancelDelete}
+        >
+          {pendingDelete?.title ? (
+            <>
+              <strong>{pendingDelete.title}</strong> and all of its messages
+              will be permanently deleted.
+            </>
+          ) : (
+            "This conversation and all of its messages will be permanently deleted."
+          )}
+        </ConfirmDialog>
       </main>
     );
   }

@@ -1,4 +1,11 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import {
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+    within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { ApiError } from "./api/client";
@@ -701,9 +708,17 @@ describe("Conversation options menu", () => {
         ).toBeTruthy();
     });
 
-    it("deletes the selected conversation after confirmation", async () => {
+    // Selected directly: a closed dialog has no accessible name to query by.
+    function confirmDialog(): HTMLDialogElement {
+        const dialog = document.querySelector<HTMLDialogElement>(
+            "dialog.confirm-dialog",
+        );
+        expect(dialog).toBeTruthy();
+        return dialog as HTMLDialogElement;
+    }
+
+    it("deletes the selected conversation after confirming in the dialog", async () => {
         const user = userEvent.setup();
-        const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
         vi.mocked(deleteConversation).mockResolvedValue(undefined);
 
@@ -715,9 +730,19 @@ describe("Conversation options menu", () => {
         await openMenu(user);
         await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
-        expect(confirmSpy).toHaveBeenCalledWith(
-            'Delete "Test conversation"? This cannot be undone.',
+        const dialog = screen.getByRole("dialog", {
+            name: "Delete conversation?",
+        });
+        expect(dialog).toHaveAttribute("open");
+        expect(dialog).toHaveAccessibleDescription(
+            "Test conversation and all of its messages will be permanently deleted.",
         );
+        expect(
+            within(dialog).getByRole("button", { name: "Cancel" }),
+        ).toHaveFocus();
+        expect(deleteConversation).not.toHaveBeenCalled();
+
+        await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
         await waitFor(() => {
             expect(deleteConversation).toHaveBeenCalledWith(
@@ -732,19 +757,101 @@ describe("Conversation options menu", () => {
         expect(
             screen.queryByRole("button", { name: "Test conversation" }),
         ).toBeNull();
+        expect(dialog).not.toHaveAttribute("open");
     });
 
-    it("keeps the conversation when deletion is not confirmed", async () => {
+    it("keeps the conversation when the dialog is cancelled", async () => {
         const user = userEvent.setup();
-
-        vi.spyOn(window, "confirm").mockReturnValue(false);
 
         renderWorkspace();
 
         await openMenu(user);
         await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await user.click(
+            within(confirmDialog()).getByRole("button", { name: "Cancel" }),
+        );
+
+        expect(confirmDialog()).not.toHaveAttribute("open");
+        expect(deleteConversation).not.toHaveBeenCalled();
+        expect(
+            screen.getByRole("button", { name: "Test conversation" }),
+        ).toBeTruthy();
+        expect(
+            screen.getByRole("button", {
+                name: "Options for Test conversation",
+            }),
+        ).toHaveFocus();
+    });
+
+    it("cancels on Escape and on a backdrop click", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+
+        // Browsers fire "cancel" on the dialog when Escape is pressed.
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        fireEvent(confirmDialog(), new Event("cancel", { cancelable: true }));
+        expect(confirmDialog()).not.toHaveAttribute("open");
+
+        // A click on the backdrop targets the dialog element itself.
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await user.click(confirmDialog());
+        expect(confirmDialog()).not.toHaveAttribute("open");
 
         expect(deleteConversation).not.toHaveBeenCalled();
+    });
+
+    it("describes an untitled conversation generically", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace([{ ...conversation, title: null }]);
+
+        await user.click(
+            await screen.findByRole("button", {
+                name: "Options for New conversation",
+            }),
+        );
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+        expect(confirmDialog()).toHaveAccessibleDescription(
+            "This conversation and all of its messages will be permanently deleted.",
+        );
+    });
+
+    it("shows progress, then closes and reports a failed delete", async () => {
+        const user = userEvent.setup();
+        let rejectDelete: (error: Error) => void = () => {};
+
+        vi.mocked(deleteConversation).mockReturnValue(
+            new Promise((_resolve, reject) => {
+                rejectDelete = reject;
+            }),
+        );
+
+        renderWorkspace();
+
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+        await user.click(
+            within(confirmDialog()).getByRole("button", { name: "Delete" }),
+        );
+
+        const busyButton = within(confirmDialog()).getByRole("button", {
+            name: "Deleting…",
+        });
+        expect(busyButton).toBeDisabled();
+        expect(
+            within(confirmDialog()).getByRole("button", { name: "Cancel" }),
+        ).toBeDisabled();
+
+        rejectDelete(new Error("Network unavailable"));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Unable to delete the conversation.",
+        );
+        expect(confirmDialog()).not.toHaveAttribute("open");
         expect(
             screen.getByRole("button", { name: "Test conversation" }),
         ).toBeTruthy();
