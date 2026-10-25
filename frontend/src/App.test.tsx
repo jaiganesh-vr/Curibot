@@ -1,15 +1,20 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { ApiError } from "./api/client";
 import userEvent from "@testing-library/user-event";
 import {
     createConversation,
+    deleteConversation,
     getMe,
     listConversations,
     listMessages,
     login,
     register,
-    sendMessage,
+    renameConversation,
+    streamMessage,
+    type ChatTurn,
+    type Conversation,
 } from "./api/client";
 import App from "./App";
 
@@ -23,12 +28,14 @@ vi.mock("./api/client", () => ({
         }
     },
     createConversation: vi.fn(),
+    deleteConversation: vi.fn(),
     getMe: vi.fn(),
     listConversations: vi.fn(),
     listMessages: vi.fn(),
     login: vi.fn(),
     register: vi.fn(),
-    sendMessage: vi.fn(),
+    renameConversation: vi.fn(),
+    streamMessage: vi.fn(),
 }));
 
 describe("App authentication screen", () => {
@@ -230,7 +237,9 @@ describe("App authentication screen", () => {
     it("clears an invalid session token and shows the sign-in screen", async () => {
         sessionStorage.setItem("access_token", "invalid-access-token");
 
-        vi.mocked(getMe).mockRejectedValue(new Error("Unauthorized"));
+        vi.mocked(getMe).mockRejectedValue(
+            new ApiError("Unauthorized", 401),
+        );
 
         render(<App />);
 
@@ -250,6 +259,32 @@ describe("App authentication screen", () => {
             screen.getByRole("textbox", { name: "Email address" }),
         ).toBeTruthy();
     });
+
+
+    it("preserves the session token when session verification fails with a server error", async () => {
+        sessionStorage.setItem("access_token", "existing-access-token");
+
+        vi.mocked(getMe).mockRejectedValue(
+            new ApiError("Server error", 500),
+        );
+
+        render(<App />);
+
+        await waitFor(() => {
+            expect(getMe).toHaveBeenCalledWith("existing-access-token");
+        });
+
+        expect(
+            await screen.findByText(
+                "Unable to verify your session. Check your connection and try again.",
+            ),
+        ).toBeTruthy();
+
+        expect(sessionStorage.getItem("access_token")).toBe(
+            "existing-access-token",
+        );
+    });
+
 
     it("logs out and clears the stored session token", async () => {
         const user = userEvent.setup();
@@ -354,7 +389,7 @@ describe("App authentication screen", () => {
 
         vi.mocked(listMessages).mockResolvedValue([]);
 
-        vi.mocked(sendMessage).mockResolvedValue({
+        const savedTurn: ChatTurn = {
             user_message: {
                 id: "message-1",
                 conversation_id: "conversation-1",
@@ -369,7 +404,21 @@ describe("App authentication screen", () => {
                 content: "LangGraph helps build stateful agent workflows.",
                 created_at: "2026-01-01T00:01:01Z",
             },
-        });
+        };
+
+        // Hold the stream open so the partial reply can be observed.
+        let finishStream: () => void = () => {};
+
+        vi.mocked(streamMessage).mockImplementation(
+            async (_token, _conversationId, _content, onToken) => {
+                onToken("LangGraph helps ");
+                await new Promise<void>((resolve) => {
+                    finishStream = resolve;
+                });
+                onToken("build stateful agent workflows.");
+                return savedTurn;
+            },
+        );
 
         render(<App />);
 
@@ -388,16 +437,28 @@ describe("App authentication screen", () => {
         await user.click(screen.getByRole("button", { name: "Send message" }));
 
         await waitFor(() => {
-            expect(sendMessage).toHaveBeenCalledWith(
+            expect(streamMessage).toHaveBeenCalledWith(
                 "test-access-token",
                 "conversation-1",
                 "Explain LangGraph",
+                expect.any(Function),
             );
         });
 
-        expect(await screen.findByText("LangGraph helps build stateful agent workflows.")).toBeTruthy();
-
+        // The user message and the partial reply show before the stream ends.
+        expect(await screen.findByText("LangGraph helps")).toBeTruthy();
         expect(screen.getByText("Explain LangGraph")).toBeTruthy();
+        expect(document.querySelector(".message-streaming")).toBeTruthy();
+
+        finishStream();
+
+        expect(
+            await screen.findByText(
+                "LangGraph helps build stateful agent workflows.",
+            ),
+        ).toBeTruthy();
+        expect(document.querySelector(".message-streaming")).toBeNull();
+        expect(screen.getAllByText("Explain LangGraph")).toHaveLength(1);
     });
 
     it("restores the message and displays an error when sending fails", async () => {
@@ -423,7 +484,7 @@ describe("App authentication screen", () => {
 
         vi.mocked(listMessages).mockResolvedValue([]);
 
-        vi.mocked(sendMessage).mockRejectedValue(
+        vi.mocked(streamMessage).mockRejectedValue(
             new Error("Network unavailable"),
         );
 
@@ -455,10 +516,11 @@ describe("App authentication screen", () => {
             );
         });
 
-        expect(sendMessage).toHaveBeenCalledWith(
+        expect(streamMessage).toHaveBeenCalledWith(
             "test-access-token",
             "conversation-1",
             "Please explain state persistence",
+            expect.any(Function),
         );
     });
 
@@ -484,3 +546,568 @@ describe("App authentication screen", () => {
     });
 });
 
+describe("Conversation options menu", () => {
+    const conversation: Conversation = {
+        id: "conversation-1",
+        title: "Test conversation",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    function renderWorkspace(conversations = [conversation]) {
+        sessionStorage.setItem("access_token", "test-access-token");
+
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue(conversations);
+        vi.mocked(listMessages).mockResolvedValue([]);
+
+        render(<App />);
+    }
+
+    async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+        await user.click(
+            await screen.findByRole("button", {
+                name: "Options for Test conversation",
+            }),
+        );
+    }
+
+    beforeEach(() => {
+        sessionStorage.clear();
+    });
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+    });
+
+    it("opens the menu and closes it on Escape or an outside click", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+
+        await openMenu(user);
+
+        expect(screen.getByRole("menu")).toBeTruthy();
+        expect(
+            screen.getByRole("button", {
+                name: "Options for Test conversation",
+            }),
+        ).toHaveAttribute("aria-expanded", "true");
+
+        await user.keyboard("{Escape}");
+        expect(screen.queryByRole("menu")).toBeNull();
+
+        await openMenu(user);
+        await user.click(document.body);
+        expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("renames a conversation when Enter is pressed", async () => {
+        const user = userEvent.setup();
+
+        vi.mocked(renameConversation).mockResolvedValue({
+            ...conversation,
+            title: "Trip ideas",
+        });
+
+        renderWorkspace();
+
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+        const titleInput = screen.getByRole("textbox", {
+            name: "Conversation title",
+        });
+
+        expect(titleInput).toHaveValue("Test conversation");
+
+        await user.clear(titleInput);
+        await user.type(titleInput, "  Trip ideas  {Enter}");
+
+        await waitFor(() => {
+            expect(renameConversation).toHaveBeenCalledWith(
+                "test-access-token",
+                "conversation-1",
+                "Trip ideas",
+            );
+        });
+
+        expect(renameConversation).toHaveBeenCalledTimes(1);
+        expect(
+            await screen.findByRole("button", { name: "Trip ideas" }),
+        ).toBeTruthy();
+        expect(
+            screen.queryByRole("textbox", { name: "Conversation title" }),
+        ).toBeNull();
+    });
+
+    it("cancels a rename on Escape without calling the API", async () => {
+        const user = userEvent.setup();
+
+        renderWorkspace();
+
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+        const titleInput = screen.getByRole("textbox", {
+            name: "Conversation title",
+        });
+
+        await user.clear(titleInput);
+        await user.type(titleInput, "Discarded title{Escape}");
+
+        expect(renameConversation).not.toHaveBeenCalled();
+        expect(
+            screen.getByRole("button", { name: "Test conversation" }),
+        ).toBeTruthy();
+    });
+
+    it("restores the previous title and shows an error when renaming fails", async () => {
+        const user = userEvent.setup();
+
+        vi.mocked(renameConversation).mockRejectedValue(
+            new Error("Network unavailable"),
+        );
+
+        renderWorkspace();
+
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+        const titleInput = screen.getByRole("textbox", {
+            name: "Conversation title",
+        });
+
+        await user.clear(titleInput);
+        await user.type(titleInput, "Trip ideas{Enter}");
+
+        expect(
+            await screen.findByRole("alert"),
+        ).toHaveTextContent("Unable to rename the conversation.");
+        expect(
+            screen.getByRole("button", { name: "Test conversation" }),
+        ).toBeTruthy();
+    });
+
+    it("deletes the selected conversation after confirmation", async () => {
+        const user = userEvent.setup();
+        const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+        vi.mocked(deleteConversation).mockResolvedValue(undefined);
+
+        renderWorkspace();
+
+        await user.click(
+            await screen.findByRole("button", { name: "Test conversation" }),
+        );
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+        expect(confirmSpy).toHaveBeenCalledWith(
+            'Delete "Test conversation"? This cannot be undone.',
+        );
+
+        await waitFor(() => {
+            expect(deleteConversation).toHaveBeenCalledWith(
+                "test-access-token",
+                "conversation-1",
+            );
+        });
+
+        expect(
+            await screen.findByRole("heading", { name: "Your AI workspace" }),
+        ).toBeTruthy();
+        expect(
+            screen.queryByRole("button", { name: "Test conversation" }),
+        ).toBeNull();
+    });
+
+    it("keeps the conversation when deletion is not confirmed", async () => {
+        const user = userEvent.setup();
+
+        vi.spyOn(window, "confirm").mockReturnValue(false);
+
+        renderWorkspace();
+
+        await openMenu(user);
+        await user.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+        expect(deleteConversation).not.toHaveBeenCalled();
+        expect(
+            screen.getByRole("button", { name: "Test conversation" }),
+        ).toBeTruthy();
+    });
+
+    it("titles an untitled conversation from the first message", async () => {
+        const user = userEvent.setup();
+
+        const savedTitleTurn: ChatTurn = {
+            user_message: {
+                id: "message-1",
+                conversation_id: "conversation-1",
+                role: "user",
+                content: "Plan a   trip\nto Japan",
+                created_at: "2026-01-01T00:01:00Z",
+            },
+            assistant_message: {
+                id: "message-2",
+                conversation_id: "conversation-1",
+                role: "assistant",
+                content: "Here is a plan.",
+                created_at: "2026-01-01T00:01:01Z",
+            },
+        };
+
+        vi.mocked(streamMessage).mockImplementation(
+            async (_token, _conversationId, _content, onToken) => {
+                onToken("Here is a plan.");
+                return savedTitleTurn;
+            },
+        );
+
+        renderWorkspace([{ ...conversation, title: null }]);
+
+        await user.click(
+            await screen.findByRole("button", { name: "New conversation" }),
+        );
+
+        const messageInput = await screen.findByRole("textbox", {
+            name: "Message",
+        });
+
+        await user.type(
+            messageInput,
+            "Plan a   trip{Shift>}{Enter}{/Shift}to Japan",
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+
+        expect(
+            await screen.findByRole("button", {
+                name: "Plan a trip to Japan",
+            }),
+        ).toBeTruthy();
+    });
+});
+
+describe("Assistant message formatting", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("renders assistant Markdown safely and keeps user text literal", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([
+            {
+                id: "conversation-1",
+                title: "Formatting",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+            },
+        ]);
+        vi.mocked(listMessages).mockResolvedValue([
+            {
+                id: "message-1",
+                conversation_id: "conversation-1",
+                role: "user",
+                content: "Use **stars** please",
+                created_at: "2026-01-01T00:01:00Z",
+            },
+            {
+                id: "message-2",
+                conversation_id: "conversation-1",
+                role: "assistant",
+                content: [
+                    "Here is **bold** text.",
+                    "",
+                    "- First item",
+                    "- Second item",
+                    "",
+                    "Run `npm test` and see [the docs](https://example.com).",
+                    "",
+                    "<script>alert('x')</script>",
+                ].join("\n"),
+                created_at: "2026-01-01T00:01:01Z",
+            },
+        ]);
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "Formatting" }),
+        );
+
+        expect(await screen.findByText("bold")).toContainHTML(
+            "<strong>bold</strong>",
+        );
+        const markdown = document.querySelector(".message-markdown");
+        expect(markdown).toBeTruthy();
+        expect(
+            within(markdown as HTMLElement)
+                .getAllByRole("listitem")
+                .map((item) => item.textContent),
+        ).toEqual(["First item", "Second item"]);
+        expect(screen.getByText("npm test").tagName).toBe("CODE");
+
+        const link = screen.getByRole("link", { name: "the docs" });
+        expect(link).toHaveAttribute("href", "https://example.com");
+        expect(link).toHaveAttribute("target", "_blank");
+        expect(link).toHaveAttribute("rel", "noopener noreferrer");
+
+        expect(document.querySelector(".message-markdown script")).toBeNull();
+        expect(screen.getByText("Use **stars** please")).toBeTruthy();
+    });
+});
+
+describe("Streaming replies", () => {
+    const first: Conversation = {
+        id: "conversation-1",
+        title: "First chat",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-02T00:00:00Z",
+    };
+    const second: Conversation = {
+        id: "conversation-2",
+        title: "Second chat",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const savedTurn: ChatTurn = {
+        user_message: {
+            id: "message-1",
+            conversation_id: "conversation-1",
+            role: "user",
+            content: "Hello",
+            created_at: "2026-01-03T00:00:00Z",
+        },
+        assistant_message: {
+            id: "message-2",
+            conversation_id: "conversation-1",
+            role: "assistant",
+            content: "Streamed reply",
+            created_at: "2026-01-03T00:00:01Z",
+        },
+    };
+
+    // A stream that stays open until the test releases or fails it.
+    function holdStream(initialTokens: string[]) {
+        const controls: {
+            finish: () => void;
+            fail: (error: Error) => void;
+        } = {
+            finish: () => {},
+            fail: () => {},
+        };
+
+        vi.mocked(streamMessage).mockImplementation(
+            async (_token, _conversationId, _content, onToken) => {
+                initialTokens.forEach(onToken);
+                await new Promise<void>((resolve, reject) => {
+                    controls.finish = resolve;
+                    controls.fail = reject;
+                });
+                return savedTurn;
+            },
+        );
+
+        return controls;
+    }
+
+    async function openChatAndSend(
+        user: ReturnType<typeof userEvent.setup>,
+        content = "Hello",
+    ) {
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([first, second]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "First chat" }),
+        );
+        await user.type(
+            await screen.findByRole("textbox", { name: "Message" }),
+            content,
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+    }
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("shows Thinking until the first token arrives", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream([]);
+
+        await openChatAndSend(user);
+
+        expect(await screen.findByText("Thinking...")).toBeTruthy();
+        expect(screen.getByText("Hello")).toBeTruthy();
+
+        stream.finish();
+
+        expect(await screen.findByText("Streamed reply")).toBeTruthy();
+        expect(screen.queryByText("Thinking...")).toBeNull();
+    });
+
+    it("keeps a streaming reply out of another conversation", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream(["Partial reply"]);
+
+        await openChatAndSend(user);
+        expect(await screen.findByText("Partial reply")).toBeTruthy();
+
+        await user.click(screen.getByRole("button", { name: "Second chat" }));
+
+        await waitFor(() => {
+            expect(listMessages).toHaveBeenLastCalledWith(
+                "test-access-token",
+                "conversation-2",
+            );
+        });
+        expect(screen.queryByText("Partial reply")).toBeNull();
+
+        stream.finish();
+
+        await waitFor(() => {
+            expect(
+                screen.getByRole("textbox", { name: "Message" }),
+            ).not.toBeDisabled();
+        });
+        expect(screen.queryByText("Streamed reply")).toBeNull();
+        expect(screen.queryByText("Hello")).toBeNull();
+    });
+
+    it("discards the partial reply and restores the draft when the stream fails", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream(["Half an ans"]);
+
+        await openChatAndSend(user, "Explain streaming");
+        expect(await screen.findByText("Half an ans")).toBeTruthy();
+
+        stream.fail(new ApiError("The assistant could not generate a response.", 502));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "The assistant could not generate a response.",
+        );
+        expect(screen.queryByText("Half an ans")).toBeNull();
+        expect(screen.getByRole("textbox", { name: "Message" })).toHaveValue(
+            "Explain streaming",
+        );
+        expect(
+            screen.getByRole("heading", {
+                name: "What would you like to explore?",
+            }),
+        ).toBeTruthy();
+    });
+
+    it("disables Delete for the conversation that is still streaming", async () => {
+        const user = userEvent.setup();
+        const stream = holdStream(["Working on it"]);
+
+        await openChatAndSend(user);
+        expect(await screen.findByText("Working on it")).toBeTruthy();
+
+        await user.click(
+            screen.getByRole("button", { name: "Options for First chat" }),
+        );
+        expect(screen.getByRole("menuitem", { name: "Delete" })).toBeDisabled();
+
+        await user.keyboard("{Escape}");
+        await user.click(
+            screen.getByRole("button", { name: "Options for Second chat" }),
+        );
+        expect(
+            screen.getByRole("menuitem", { name: "Delete" }),
+        ).not.toBeDisabled();
+
+        stream.finish();
+        expect(await screen.findByText("Streamed reply")).toBeTruthy();
+    });
+});
+
+describe("Conversation rename on blur", () => {
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    it("saves the new title when the input loses focus", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue({
+            id: "user-1",
+            email: "jaiganesh@example.com",
+            is_active: true,
+            created_at: "2026-01-01T00:00:00Z",
+        });
+        vi.mocked(listConversations).mockResolvedValue([
+            {
+                id: "conversation-1",
+                title: "Old title",
+                created_at: "2026-01-01T00:00:00Z",
+                updated_at: "2026-01-01T00:00:00Z",
+            },
+        ]);
+        vi.mocked(renameConversation).mockResolvedValue({
+            id: "conversation-1",
+            title: "Blurred title",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+        });
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "Options for Old title" }),
+        );
+        await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+        const titleInput = screen.getByRole("textbox", {
+            name: "Conversation title",
+        });
+        await user.clear(titleInput);
+        await user.type(titleInput, "Blurred title");
+        await user.click(document.body);
+
+        await waitFor(() => {
+            expect(renameConversation).toHaveBeenCalledWith(
+                "test-access-token",
+                "conversation-1",
+                "Blurred title",
+            );
+        });
+        expect(renameConversation).toHaveBeenCalledTimes(1);
+        expect(
+            await screen.findByRole("button", { name: "Blurred title" }),
+        ).toBeTruthy();
+    });
+});

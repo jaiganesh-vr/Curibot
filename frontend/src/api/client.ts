@@ -46,6 +46,24 @@ export class ApiError extends Error {
     }
 }
 
+async function toApiError(response: Response): Promise<ApiError> {
+    let message = `Request failed (${response.status})`;
+
+    try {
+        const body: { detail?: unknown } = await response.json();
+
+        if (typeof body.detail === "string") {
+            message = body.detail;
+        } else if (body.detail !== undefined) {
+            message = JSON.stringify(body.detail);
+        }
+    } catch {
+        // Keep the default message if the response isn't JSON.
+    }
+
+    return new ApiError(message, response.status);
+}
+
 async function request<T>(
     path: string,
     options: RequestInit = {},
@@ -69,21 +87,7 @@ async function request<T>(
     });
 
     if (!response.ok) {
-        let message = `Request failed (${response.status})`;
-
-        try {
-            const body: { detail?: unknown } = await response.json();
-
-            if (typeof body.detail === "string") {
-                message = body.detail;
-            } else if (body.detail !== undefined) {
-                message = JSON.stringify(body.detail);
-            }
-        } catch {
-            // Keep the default message if the response isn't JSON.
-        }
-
-        throw new ApiError(message, response.status);
+        throw await toApiError(response);
     }
 
     if (response.status === 204) {
@@ -143,6 +147,32 @@ export function listConversations(
     return request<Conversation[]>("/conversations", {}, token);
 }
 
+export function renameConversation(
+    token: string,
+    conversationId: string,
+    title: string,
+): Promise<Conversation> {
+    return request<Conversation>(
+        `/conversations/${encodeURIComponent(conversationId)}`,
+        {
+            method: "PATCH",
+            body: JSON.stringify({ title }),
+        },
+        token,
+    );
+}
+
+export function deleteConversation(
+    token: string,
+    conversationId: string,
+): Promise<void> {
+    return request<void>(
+        `/conversations/${encodeURIComponent(conversationId)}`,
+        { method: "DELETE" },
+        token,
+    );
+}
+
 export function sendMessage(
     token: string,
     conversationId: string,
@@ -164,4 +194,86 @@ export function listMessages(
         {},
         token,
     );
+}
+
+/**
+ * Send a message and stream the assistant reply.
+ *
+ * The backend responds with Server-Sent Events: "token" events carry pieces
+ * of the reply, then "done" carries the saved turn or "error" a failure.
+ * EventSource cannot POST or send an Authorization header, so the stream is
+ * read and parsed from fetch directly.
+ */
+export async function streamMessage(
+    token: string,
+    conversationId: string,
+    content: string,
+    onToken: (text: string) => void,
+): Promise<ChatTurn> {
+    const response = await fetch(
+        `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/messages/stream`,
+        {
+            method: "POST",
+            headers: {
+                Accept: "text/event-stream",
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ content }),
+        },
+    );
+
+    if (!response.ok) {
+        throw await toApiError(response);
+    }
+
+    if (!response.body) {
+        throw new ApiError("Streaming is not supported by this browser.", 0);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for (;;) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+
+        // Events are separated by a blank line; keep any partial event.
+        const events = buffer.split("\n\n");
+        buffer = done ? "" : (events.pop() ?? "");
+
+        for (const rawEvent of events) {
+            let eventName = "message";
+            let data = "";
+
+            for (const line of rawEvent.split("\n")) {
+                if (line.startsWith("event: ")) {
+                    eventName = line.slice("event: ".length);
+                } else if (line.startsWith("data: ")) {
+                    data += line.slice("data: ".length);
+                }
+            }
+
+            if (!data) {
+                continue;
+            }
+
+            const payload: unknown = JSON.parse(data);
+
+            if (eventName === "token") {
+                onToken((payload as { text: string }).text);
+            } else if (eventName === "done") {
+                await reader.cancel();
+                return payload as ChatTurn;
+            } else if (eventName === "error") {
+                await reader.cancel();
+                throw new ApiError((payload as { detail: string }).detail, 502);
+            }
+        }
+
+        if (done) {
+            throw new ApiError("The response ended unexpectedly.", 502);
+        }
+    }
 }

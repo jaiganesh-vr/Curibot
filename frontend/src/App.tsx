@@ -1,21 +1,34 @@
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
   createConversation,
+  deleteConversation,
   getMe,
   listConversations,
   listMessages,
   login,
   register,
-  sendMessage,
+  renameConversation,
+  streamMessage,
   type Conversation,
   type Message,
   type User,
 } from "./api/client";
+import MarkdownMessage from "./MarkdownMessage";
 import "./App.css";
 
 type AuthMode = "login" | "register";
+
+// A turn shown while the assistant reply is still streaming in.
+interface PendingTurn {
+  conversationId: string;
+  userContent: string;
+  reply: string;
+}
+
+// Follow streaming text only while the reader is already near the bottom.
+const STICK_TO_BOTTOM_THRESHOLD_PX = 160;
 
 function getStoredToken(): string | null {
   return sessionStorage.getItem("access_token");
@@ -41,13 +54,28 @@ function App() {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [creatingConversation, setCreatingConversation] = useState(false);
   const [sending, setSending] = useState(false);
+  const [pendingTurn, setPendingTurn] = useState<PendingTurn | null>(null);
 
   const [chatError, setChatError] = useState("");
+
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  const chatContentRef = useRef<HTMLDivElement>(null);
+  // Lets an in-flight stream check which conversation is open when it ends.
+  const selectedConversationIdRef = useRef<string | null>(null);
+  // Enter, Escape, and blur can all end a rename; only the first one counts.
+  const renameFinishedRef = useRef(false);
 
   const selectedConversation =
     conversations.find(
       (conversation) => conversation.id === selectedConversationId,
     ) ?? null;
+
+  const showPendingTurn =
+    pendingTurn !== null &&
+    pendingTurn.conversationId === selectedConversationId;
 
   // Restore the authenticated session after a page refresh.
   useEffect(() => {
@@ -66,11 +94,20 @@ function App() {
         if (!cancelled) {
           setUser(authenticatedUser);
         }
-      } catch {
-        if (!cancelled) {
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
+        if (err instanceof ApiError && err.status === 401) {
           sessionStorage.removeItem("access_token");
           setUser(null);
+          return;
         }
+
+        setError(
+          "Unable to verify your session. Check your connection and try again.",
+        );
       }
     }
 
@@ -177,6 +214,70 @@ function App() {
     };
   }, [user, selectedConversationId]);
 
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  // Jump to the newest message when history loads or a turn is saved.
+  useEffect(() => {
+    const chatContent = chatContentRef.current;
+
+    if (chatContent) {
+      chatContent.scrollTop = chatContent.scrollHeight;
+    }
+  }, [messages]);
+
+  // Follow a streaming reply unless the user has scrolled up to read.
+  useEffect(() => {
+    const chatContent = chatContentRef.current;
+
+    if (!chatContent || pendingTurn === null) {
+      return;
+    }
+
+    const distanceFromBottom =
+      chatContent.scrollHeight -
+      chatContent.scrollTop -
+      chatContent.clientHeight;
+
+    if (
+      pendingTurn.reply === "" ||
+      distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX
+    ) {
+      chatContent.scrollTop = chatContent.scrollHeight;
+    }
+  }, [pendingTurn]);
+
+  // Close the conversation options menu on an outside click or Escape.
+  useEffect(() => {
+    if (openMenuId === null) {
+      return;
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        !(event.target instanceof Element) ||
+        !event.target.closest("[data-conversation-menu]")
+      ) {
+        setOpenMenuId(null);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openMenuId]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -248,7 +349,100 @@ function App() {
     }
   }
 
+  function handleStartRename(conversation: Conversation) {
+    renameFinishedRef.current = false;
+    setOpenMenuId(null);
+    setRenameDraft(conversation.title ?? "");
+    setRenamingId(conversation.id);
+  }
+
+  function handleCancelRename() {
+    renameFinishedRef.current = true;
+    setRenamingId(null);
+  }
+
+  async function handleRenameSubmit(conversation: Conversation) {
+    if (renameFinishedRef.current) {
+      return;
+    }
+
+    renameFinishedRef.current = true;
+    setRenamingId(null);
+
+    const title = renameDraft.trim();
+    const token = getStoredToken();
+
+    if (!title || title === conversation.title || !token) {
+      return;
+    }
+
+    setChatError("");
+    setConversations((current) =>
+      current.map((item) =>
+        item.id === conversation.id ? { ...item, title } : item,
+      ),
+    );
+
+    try {
+      const updated = await renameConversation(token, conversation.id, title);
+
+      setConversations((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      );
+    } catch (err) {
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === conversation.id
+            ? { ...item, title: conversation.title }
+            : item,
+        ),
+      );
+      setChatError(
+        err instanceof ApiError
+          ? err.message
+          : "Unable to rename the conversation.",
+      );
+    }
+  }
+
+  async function handleDeleteConversation(conversation: Conversation) {
+    setOpenMenuId(null);
+
+    const prompt = conversation.title
+      ? `Delete "${conversation.title}"? This cannot be undone.`
+      : "Delete this conversation? This cannot be undone.";
+    const token = getStoredToken();
+
+    if (!token || !window.confirm(prompt)) {
+      return;
+    }
+
+    setChatError("");
+
+    try {
+      await deleteConversation(token, conversation.id);
+
+      setConversations((current) =>
+        current.filter((item) => item.id !== conversation.id),
+      );
+
+      if (conversation.id === selectedConversationId) {
+        setSelectedConversationId(null);
+        setMessages([]);
+        setComposer("");
+      }
+    } catch (err) {
+      setChatError(
+        err instanceof ApiError
+          ? err.message
+          : "Unable to delete the conversation.",
+      );
+    }
+  }
+
   function handleSelectConversation(conversationId: string) {
+    setOpenMenuId(null);
+
     if (conversationId === selectedConversationId) {
       return;
     }
@@ -279,15 +473,30 @@ function App() {
     setSending(true);
     setChatError("");
     setComposer("");
+    setPendingTurn({ conversationId, userContent: content, reply: "" });
 
     try {
-      const turn = await sendMessage(token, conversationId, content);
+      const turn = await streamMessage(
+        token,
+        conversationId,
+        content,
+        (text) =>
+          setPendingTurn((current) =>
+            current?.conversationId === conversationId
+              ? { ...current, reply: current.reply + text }
+              : current,
+          ),
+      );
 
-      setMessages((current) => [
-        ...current,
-        turn.user_message,
-        turn.assistant_message,
-      ]);
+      // If the user switched chats mid-stream, the saved turn loads with
+      // that conversation's history instead of landing in another chat.
+      if (selectedConversationIdRef.current === conversationId) {
+        setMessages((current) => [
+          ...current,
+          turn.user_message,
+          turn.assistant_message,
+        ]);
+      }
 
       setConversations((current) => {
         const updated = current.map((conversation) =>
@@ -296,7 +505,7 @@ function App() {
               ...conversation,
               title:
                 conversation.title ??
-                content.slice(0, 60),
+                content.replace(/\s+/g, " ").slice(0, 60),
               updated_at: turn.assistant_message.created_at,
             }
             : conversation,
@@ -316,6 +525,7 @@ function App() {
           : "Unable to send your message. Please try again.",
       );
     } finally {
+      setPendingTurn(null);
       setSending(false);
     }
   }
@@ -337,6 +547,9 @@ function App() {
     setMessagesLoading(false);
     setCreatingConversation(false);
     setSending(false);
+    setPendingTurn(null);
+    setOpenMenuId(null);
+    setRenamingId(null);
     setMode("login");
   }
 
@@ -345,8 +558,8 @@ function App() {
       <main className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-header">
-            <div className="brand-mark">S</div>
-            <span className="brand-name">Stateful AI</span>
+            <div className="brand-mark">C</div>
+            <span className="brand-name">Curibot</span>
           </div>
 
           <button
@@ -378,27 +591,116 @@ function App() {
               </p>
             ) : (
               <ul className="conversation-list">
-                {conversations.map((conversation) => (
-                  <li key={conversation.id}>
-                    <button
-                      className={`conversation-item ${conversation.id === selectedConversationId
-                          ? "conversation-item-active"
-                          : ""
-                        }`}
-                      type="button"
-                      onClick={() =>
-                        handleSelectConversation(conversation.id)
-                      }
-                      aria-current={
-                        conversation.id === selectedConversationId
-                          ? "page"
-                          : undefined
+                {conversations.map((conversation) => {
+                  const title = conversation.title || "New conversation";
+                  const menuOpen = openMenuId === conversation.id;
+
+                  return (
+                    <li
+                      key={conversation.id}
+                      className={
+                        menuOpen ? "conversation-row-menu-open" : undefined
                       }
                     >
-                      {conversation.title || "New conversation"}
-                    </button>
-                  </li>
-                ))}
+                      {renamingId === conversation.id ? (
+                        <form
+                          className="conversation-rename"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void handleRenameSubmit(conversation);
+                          }}
+                        >
+                          <input
+                            aria-label="Conversation title"
+                            value={renameDraft}
+                            maxLength={200}
+                            autoFocus
+                            onFocus={(event) => event.currentTarget.select()}
+                            onChange={(event) =>
+                              setRenameDraft(event.target.value)
+                            }
+                            onBlur={() => void handleRenameSubmit(conversation)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                handleCancelRename();
+                              }
+                            }}
+                          />
+                        </form>
+                      ) : (
+                        <>
+                          <button
+                            className={`conversation-item ${conversation.id === selectedConversationId
+                              ? "conversation-item-active"
+                              : ""
+                              }`}
+                            type="button"
+                            onClick={() =>
+                              handleSelectConversation(conversation.id)
+                            }
+                            aria-current={
+                              conversation.id === selectedConversationId
+                                ? "page"
+                                : undefined
+                            }
+                          >
+                            {title}
+                          </button>
+
+                          <div
+                            className="conversation-actions"
+                            data-conversation-menu
+                          >
+                            <button
+                              className="conversation-menu-button"
+                              type="button"
+                              aria-label={`Options for ${title}`}
+                              aria-haspopup="menu"
+                              aria-expanded={menuOpen}
+                              onClick={() =>
+                                setOpenMenuId(
+                                  menuOpen ? null : conversation.id,
+                                )
+                              }
+                            >
+                              <span className="conversation-menu-dot" />
+                              <span className="conversation-menu-dot" />
+                              <span className="conversation-menu-dot" />
+                            </button>
+
+                            {menuOpen && (
+                              <div className="conversation-menu" role="menu">
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() =>
+                                    handleStartRename(conversation)
+                                  }
+                                >
+                                  Rename
+                                </button>
+                                <button
+                                  className="conversation-menu-danger"
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={
+                                    sending &&
+                                    conversation.id === selectedConversationId
+                                  }
+                                  onClick={() =>
+                                    void handleDeleteConversation(conversation)
+                                  }
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -428,7 +730,7 @@ function App() {
             <div>
               <p className="header-eyebrow">YOUR AI WORKSPACE</p>
               <h1>
-                {selectedConversation?.title || "Stateful AI"}
+                {selectedConversation?.title || "Curibot"}
               </h1>
             </div>
 
@@ -438,7 +740,7 @@ function App() {
             </span>
           </header>
 
-          <div className="chat-content">
+          <div className="chat-content" ref={chatContentRef}>
             {!selectedConversationId ? (
               <div className="welcome-content">
                 <div className="welcome-icon" aria-hidden="true">
@@ -472,7 +774,7 @@ function App() {
                     <p className="chat-status">
                       Loading messages...
                     </p>
-                  ) : messages.length === 0 && !sending ? (
+                  ) : messages.length === 0 && !showPendingTurn ? (
                     <div className="conversation-empty">
                       <h2>What would you like to explore?</h2>
                       <p>Send a message to start this conversation.</p>
@@ -484,7 +786,7 @@ function App() {
                         key={message.id}
                       >
                         <div className="message-avatar">
-                          {message.role === "user" ? "Y" : "S"}
+                          {message.role === "user" ? "Y" : "C"}
                         </div>
 
                         <div className="message-body">
@@ -493,24 +795,47 @@ function App() {
                               ? "You"
                               : "Assistant"}
                           </p>
-                          <p className="message-text">
-                            {message.content}
-                          </p>
+                          {message.role === "assistant" ? (
+                            <MarkdownMessage content={message.content} />
+                          ) : (
+                            <p className="message-text">
+                              {message.content}
+                            </p>
+                          )}
                         </div>
                       </article>
                     ))
                   )}
 
-                  {sending && (
-                    <div className="message message-assistant">
-                      <div className="message-avatar">S</div>
-                      <div className="message-body">
-                        <p className="message-role">Assistant</p>
-                        <p className="message-text">
-                          Thinking...
-                        </p>
-                      </div>
-                    </div>
+                  {showPendingTurn && pendingTurn && (
+                    <>
+                      <article className="message message-user">
+                        <div className="message-avatar">Y</div>
+                        <div className="message-body">
+                          <p className="message-role">You</p>
+                          <p className="message-text">
+                            {pendingTurn.userContent}
+                          </p>
+                        </div>
+                      </article>
+
+                      <article
+                        className={`message message-assistant ${pendingTurn.reply ? "message-streaming" : ""}`}
+                        aria-busy="true"
+                      >
+                        <div className="message-avatar">C</div>
+                        <div className="message-body">
+                          <p className="message-role">Assistant</p>
+                          {pendingTurn.reply ? (
+                            <MarkdownMessage content={pendingTurn.reply} />
+                          ) : (
+                            <p className="message-text message-thinking">
+                              Thinking...
+                            </p>
+                          )}
+                        </div>
+                      </article>
+                    </>
                   )}
                 </div>
               </div>
@@ -525,7 +850,7 @@ function App() {
               >
                 <textarea
                   aria-label="Message"
-                  placeholder="Message Stateful AI..."
+                  placeholder="Message Curibot..."
                   value={composer}
                   onChange={(event) => setComposer(event.target.value)}
                   onKeyDown={(event) => {
@@ -573,8 +898,8 @@ function App() {
     <main className="auth-page">
       <section className="auth-card">
         <div className="auth-brand">
-          <div className="brand-mark">S</div>
-          <span className="brand-name">Stateful AI</span>
+          <div className="brand-mark">C</div>
+          <span className="brand-name">Curibot</span>
         </div>
 
         <div className="auth-heading">
