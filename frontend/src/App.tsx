@@ -1,5 +1,12 @@
 
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   ApiError,
   createConversation,
@@ -22,6 +29,8 @@ import "./App.css";
 
 type AuthMode = "login" | "register";
 
+const SESSION_EXPIRED_NOTICE = "Your session has expired. Please sign in again.";
+
 // A turn shown while the assistant reply is still streaming in.
 interface PendingTurn {
   conversationId: string;
@@ -43,6 +52,11 @@ function App() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [user, setUser] = useState<User | null>(null);
+  // A stored token is verified before choosing between login and workspace,
+  // so a signed-in user does not see the login form flash on refresh.
+  const [restoringSession, setRestoringSession] = useState(
+    () => getStoredToken() !== null,
+  );
 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -88,6 +102,12 @@ function App() {
     pendingTurn !== null &&
     pendingTurn.conversationId === selectedConversationId;
 
+  // Lets the loading effects sign out on a 401 without re-running when the
+  // handler's identity changes between renders.
+  const onLoadError = useEffectEvent((err: unknown) =>
+    handleSessionExpired(err),
+  );
+
   // Restore the authenticated session after a page refresh.
   useEffect(() => {
     const token = getStoredToken();
@@ -119,6 +139,10 @@ function App() {
         setError(
           "Unable to verify your session. Check your connection and try again.",
         );
+      } finally {
+        if (!cancelled) {
+          setRestoringSession(false);
+        }
       }
     }
 
@@ -154,7 +178,7 @@ function App() {
           setConversations(savedConversations);
         }
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !onLoadError(err)) {
           setChatError(
             err instanceof ApiError
               ? err.message
@@ -204,7 +228,7 @@ function App() {
           setMessages(history);
         }
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !onLoadError(err)) {
           setChatError(
             err instanceof ApiError
               ? err.message
@@ -390,6 +414,10 @@ function App() {
       setComposer("");
       setSelectedConversationId(conversation.id);
     } catch (err) {
+      if (handleSessionExpired(err)) {
+        return;
+      }
+
       setChatError(
         err instanceof ApiError
           ? err.message
@@ -441,6 +469,10 @@ function App() {
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
     } catch (err) {
+      if (handleSessionExpired(err)) {
+        return;
+      }
+
       setConversations((current) =>
         current.map((item) =>
           item.id === conversation.id
@@ -483,6 +515,10 @@ function App() {
         setComposer("");
       }
     } catch (err) {
+      if (handleSessionExpired(err)) {
+        return;
+      }
+
       setChatError(
         err instanceof ApiError
           ? err.message
@@ -560,6 +596,10 @@ function App() {
       );
 
     } catch (err) {
+      if (handleSessionExpired(err)) {
+        return;
+      }
+
       // Restore the failed message unless the user already typed a new one.
       setComposer((current) => (current.trim() ? current : content));
       setChatError(
@@ -634,14 +674,17 @@ function App() {
     }
   }
 
-  function handleLogout() {
+  // Pass a notice to explain an involuntary sign-out on the login screen.
+  function handleLogout(reason?: string) {
     sessionStorage.removeItem("access_token");
 
     setUser(null);
-    setEmail("");
+    setRestoringSession(false);
+    // Keep the email after an expiry so signing back in is one step.
+    setEmail(reason && user ? user.email : "");
     setPassword("");
     setError("");
-    setNotice("");
+    setNotice(reason ?? "");
     setConversations([]);
     setSelectedConversationId(null);
     setMessages([]);
@@ -656,6 +699,30 @@ function App() {
     setRenamingId(null);
     setSidebarOpen(false);
     setMode("login");
+  }
+
+  // An authenticated request rejected with 401 means the token expired or
+  // was revoked; sign out instead of leaving every action failing.
+  function handleSessionExpired(err: unknown): boolean {
+    if (err instanceof ApiError && err.status === 401) {
+      handleLogout(SESSION_EXPIRED_NOTICE);
+      return true;
+    }
+
+    return false;
+  }
+
+  if (restoringSession) {
+    return (
+      <main className="auth-page">
+        <div className="session-restoring" role="status">
+          <div className="brand-mark" aria-hidden="true">
+            C
+          </div>
+          <p>Restoring your session…</p>
+        </div>
+      </main>
+    );
   }
 
   if (user) {
@@ -844,7 +911,7 @@ function App() {
             <button
               className="logout-button"
               type="button"
-              onClick={handleLogout}
+              onClick={() => handleLogout()}
             >
               Log out
             </button>

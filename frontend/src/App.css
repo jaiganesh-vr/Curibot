@@ -985,6 +985,23 @@
   background: #f9fafb;
 }
 
+.session-restoring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.session-restoring p {
+  margin: 0;
+}
+
+.session-restoring .brand-mark {
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
 .auth-card {
   width: 100%;
   max-width: 420px;

@@ -1311,3 +1311,157 @@ describe("Mobile conversation drawer", () => {
         expect(sidebar()).toHaveClass("sidebar-open");
     });
 });
+
+describe("Session restore and expiry", () => {
+    const activeUser = {
+        id: "user-1",
+        email: "jaiganesh@example.com",
+        is_active: true,
+        created_at: "2026-01-01T00:00:00Z",
+    };
+    const conversation: Conversation = {
+        id: "conversation-1",
+        title: "Test conversation",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    afterEach(() => {
+        cleanup();
+        vi.clearAllMocks();
+        sessionStorage.clear();
+    });
+
+    function expectSignedOutWithNotice() {
+        expect(sessionStorage.getItem("access_token")).toBeNull();
+        expect(
+            screen.getByRole("heading", { name: "Welcome back" }),
+        ).toBeTruthy();
+        expect(screen.getByRole("status")).toHaveTextContent(
+            "Your session has expired. Please sign in again.",
+        );
+        expect(
+            screen.getByRole("textbox", { name: "Email address" }),
+        ).toHaveValue("jaiganesh@example.com");
+    }
+
+    it("shows a restoring screen instead of the login form while verifying", async () => {
+        sessionStorage.setItem("access_token", "test-access-token");
+
+        let resolveMe: (user: typeof activeUser) => void = () => {};
+        vi.mocked(getMe).mockReturnValue(
+            new Promise((resolve) => {
+                resolveMe = resolve;
+            }),
+        );
+        vi.mocked(listConversations).mockResolvedValue([]);
+
+        render(<App />);
+
+        expect(screen.getByRole("status")).toHaveTextContent(
+            "Restoring your session…",
+        );
+        expect(screen.queryByRole("heading", { name: "Welcome back" })).toBeNull();
+
+        resolveMe(activeUser);
+
+        expect(
+            await screen.findByText(
+                "No conversations yet. Start a new chat to begin.",
+            ),
+        ).toBeTruthy();
+    });
+
+    it("shows the login form immediately when no token is stored", () => {
+        render(<App />);
+
+        expect(
+            screen.getByRole("heading", { name: "Welcome back" }),
+        ).toBeTruthy();
+        expect(screen.queryByText("Restoring your session…")).toBeNull();
+    });
+
+    it("signs out with a notice when loading conversations returns 401", async () => {
+        sessionStorage.setItem("access_token", "expired-token");
+        vi.mocked(getMe).mockResolvedValue(activeUser);
+        vi.mocked(listConversations).mockRejectedValue(
+            new ApiError("Invalid or expired authentication credentials.", 401),
+        );
+
+        render(<App />);
+
+        expect(
+            await screen.findByRole("heading", { name: "Welcome back" }),
+        ).toBeTruthy();
+        expectSignedOutWithNotice();
+    });
+
+    it("signs out with a notice when sending a message returns 401", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue(activeUser);
+        vi.mocked(listConversations).mockResolvedValue([conversation]);
+        vi.mocked(listMessages).mockResolvedValue([]);
+        vi.mocked(streamMessage).mockRejectedValue(
+            new ApiError("Invalid or expired authentication credentials.", 401),
+        );
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "Test conversation" }),
+        );
+        await user.type(
+            await screen.findByRole("textbox", { name: "Message" }),
+            "Hello",
+        );
+        await user.click(screen.getByRole("button", { name: "Send message" }));
+
+        expect(
+            await screen.findByRole("heading", { name: "Welcome back" }),
+        ).toBeTruthy();
+        expectSignedOutWithNotice();
+    });
+
+    it("keeps the user signed in for non-auth errors", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue(activeUser);
+        vi.mocked(listConversations).mockResolvedValue([]);
+        vi.mocked(createConversation).mockRejectedValue(
+            new ApiError("Server error", 500),
+        );
+
+        render(<App />);
+
+        await user.click(
+            await screen.findByRole("button", { name: "New Chat" }),
+        );
+
+        expect(await screen.findByRole("alert")).toHaveTextContent(
+            "Server error",
+        );
+        expect(sessionStorage.getItem("access_token")).toBe(
+            "test-access-token",
+        );
+    });
+
+    it("clears the email and notice on a normal logout", async () => {
+        const user = userEvent.setup();
+
+        sessionStorage.setItem("access_token", "test-access-token");
+        vi.mocked(getMe).mockResolvedValue(activeUser);
+        vi.mocked(listConversations).mockResolvedValue([]);
+
+        render(<App />);
+
+        await user.click(await screen.findByRole("button", { name: "Log out" }));
+
+        expect(
+            screen.getByRole("textbox", { name: "Email address" }),
+        ).toHaveValue("");
+        expect(screen.queryByRole("status")).toBeNull();
+    });
+});
