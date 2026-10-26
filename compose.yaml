@@ -28,7 +28,7 @@ services:
       # Optional: web search is disabled when the key is empty.
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       WEB_SEARCH_MAX_RESULTS: ${WEB_SEARCH_MAX_RESULTS:-5}
-      WEB_SEARCH_MAX_ROUNDS: ${WEB_SEARCH_MAX_ROUNDS:-3}
+      WEB_SEARCH_MAX_ROUNDS: ${WEB_SEARCH_MAX_ROUNDS:-2}
       MEMORY_ENABLED: ${MEMORY_ENABLED:-true}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
