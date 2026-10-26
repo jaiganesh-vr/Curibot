@@ -7,7 +7,7 @@ Curibot remembers your conversations and the facts you share about yourself,
 searches the web when a question needs live information, and streams its
 answers token by token with cited sources.
 
-<!-- Screenshot or demo GIF: docs/images/demo.gif -->
+![Curibot demo: signing up, a web search answered with sources, saving a preference to memory, and switching to the dark theme](docs/images/curibot_demo.gif)
 
 ## Highlights
 
