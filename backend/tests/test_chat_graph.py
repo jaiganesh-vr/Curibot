@@ -7,13 +7,18 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.services.chat_graph import build_chat_graph, fit_history_to_budget
+from app.services.chat_graph import (
+    build_chat_graph,
+    drop_earlier_tool_steps,
+    fit_history_to_budget,
+)
 from app.services.prompts import build_system_prompt
 
 
@@ -111,6 +116,32 @@ def test_oversized_latest_message_is_still_sent() -> None:
     history = [*long_conversation(3), huge]
 
     assert fit_history_to_budget(history, max_tokens=1_000) == [huge]
+
+
+def test_only_the_current_turn_keeps_its_tool_steps() -> None:
+    def tool_step(call_id: str) -> list[BaseMessage]:
+        return [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "web_search", "args": {"query": "q"}, "id": call_id}
+                ],
+            ),
+            ToolMessage(content="results", tool_call_id=call_id),
+        ]
+
+    earlier = [
+        HumanMessage(content="News?"),
+        *tool_step("a"),
+        AIMessage(content="Headlines"),
+    ]
+    current = [HumanMessage(content="More?"), *tool_step("b")]
+
+    assert drop_earlier_tool_steps([*earlier, *current]) == [
+        earlier[0],
+        earlier[-1],
+        *current,
+    ]
 
 
 def test_graph_trims_model_input_but_keeps_full_state() -> None:

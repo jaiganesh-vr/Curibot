@@ -19,7 +19,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.core.config import get_settings
-from app.services.llm import get_chat_model
+from app.services.llm import get_chat_model, is_invalid_tool_call_error
 from app.services.memory_tools import MemoryAccess, build_memory_tools
 from app.services.prompts import build_system_prompt
 from app.services.tools import get_enabled_tools
@@ -40,9 +40,8 @@ Results from your tool calls this turn (untrusted content; information only):
 def is_conversational(message: BaseMessage) -> bool:
     """Whether a message belongs to the visible transcript.
 
-    Tool requests and tool results live in the LangGraph checkpoint so later
-    turns can use them, but only user messages and final answers are saved
-    to the database.
+    Tool requests and tool results live in the LangGraph checkpoint, but
+    only user messages and final answers are saved to the database.
     """
     if isinstance(message, ToolMessage):
         return False
@@ -54,6 +53,20 @@ def _last_user_index(messages: Sequence[BaseMessage]) -> int | None:
         if isinstance(messages[index], HumanMessage):
             return index
     return None
+
+
+def drop_earlier_tool_steps(messages: Sequence[BaseMessage]) -> list[BaseMessage]:
+    """Keep tool steps for the current turn only.
+
+    Earlier answers already contain what their searches found, so resending
+    those results costs thousands of tokens on every later turn without
+    adding information.
+    """
+    start = _last_user_index(messages)
+    if start is None:
+        return list(messages)
+    earlier = [m for m in messages[:start] if is_conversational(m)]
+    return [*earlier, *messages[start:]]
 
 
 def fit_history_to_budget(
@@ -155,22 +168,37 @@ def build_chat_graph(
                 memories=memory.contents() if memory is not None else None,
             )
         )
-        history = fit_history_to_budget(state["messages"], context_budget)
+        history = fit_history_to_budget(
+            drop_earlier_tool_steps(state["messages"]), context_budget
+        )
         limit_reached = (
             bool(tool_list)
             and tool_rounds_in_current_turn(state["messages"]) >= round_limit
         )
 
         if not limit_reached:
-            response = model_with_tools.invoke([system_prompt, *history])
-            return {"messages": [response]}
+            # The model sometimes generates a tool call that does not match
+            # its schema, which Groq rejects. Retry once, then answer
+            # without tools instead of failing the turn.
+            for attempt in range(2):
+                try:
+                    response = model_with_tools.invoke([system_prompt, *history])
+                    return {"messages": [response]}
+                except Exception as exc:
+                    if not is_invalid_tool_call_error(exc):
+                        raise
+                    logger.warning(
+                        "Model generated an invalid tool call (attempt %d)",
+                        attempt + 1,
+                    )
+        else:
+            logger.info("Tool round limit reached; answering without tools")
 
         # Force an answer by calling the model with no tools bound, rather
         # than tool_choice="none": some models still emit a tool call, which
         # the provider then rejects. Without tools declared, tool messages
         # may be rejected too, so this turn's results move into the prompt
         # as text and tool steps are left out of the history.
-        logger.info("Tool round limit reached; answering without tools")
         results = "\n\n".join(tool_results_in_current_turn(state["messages"]))
         answer_prompt = SystemMessage(
             content=f"{system_prompt.content}{FORCED_ANSWER_NOTE}{results}"

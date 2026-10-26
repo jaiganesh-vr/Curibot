@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     tavily_api_key: SecretStr | None = None
     web_search_max_results: int = Field(default=5, ge=1, le=10)
     # Search rounds allowed per question before the model must answer.
-    web_search_max_rounds: int = Field(default=3, ge=1, le=5)
+    web_search_max_rounds: int = Field(default=2, ge=1, le=5)
 
     # Long-term memory: the assistant can remember facts about each user
     # across conversations.

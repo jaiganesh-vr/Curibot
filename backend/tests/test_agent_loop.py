@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import groq
+import httpx
 import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -32,7 +34,17 @@ from app.services.conversations import (
     send_message,
     stream_message,
 )
+from app.services.llm import is_invalid_tool_call_error
 from tests.test_conversation_persistence import create_user
+
+
+def invalid_tool_call_error(body: object) -> groq.APIError:
+    return groq.APIError(
+        "Tool call validation failed: parameters for tool web_search did not "
+        "match schema: errors: [missing properties: 'query']",
+        httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions"),
+        body=body,
+    )
 
 
 def search_call(query: str, call_id: str = "call-1") -> AIMessage:
@@ -47,7 +59,8 @@ class ScriptedToolModel(BaseChatModel):
 
     Called without tools bound, it cannot request a tool, so it returns
     `forced_answer` when the next scripted reply is a tool call (or the
-    script has run out).
+    script has run out). With tools bound, the first `invalid_tool_calls`
+    calls fail the way Groq rejects a malformed tool call.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -57,6 +70,7 @@ class ScriptedToolModel(BaseChatModel):
     calls: list[list[BaseMessage]] = []
     tool_choices: list[Any] = []
     tools_bound: list[bool] = []
+    invalid_tool_calls: int = 0
 
     @property
     def _llm_type(self) -> str:
@@ -70,6 +84,9 @@ class ScriptedToolModel(BaseChatModel):
         self.tool_choices.append(kwargs.get("tool_choice"))
         has_tools = bool(kwargs.get("has_tools"))
         self.tools_bound.append(has_tools)
+        if has_tools and self.invalid_tool_calls:
+            self.invalid_tool_calls -= 1
+            raise invalid_tool_call_error({"code": "tool_use_failed"})
         if not has_tools and (not self.script or self.script[0].tool_calls):
             reply = AIMessage(content=self.forced_answer)
         else:
@@ -182,6 +199,43 @@ def test_tool_failure_is_reported_to_the_model_not_raised() -> None:
     assert isinstance(tool_message, ToolMessage)
     assert tool_message.status == "error"
     assert result["messages"][-1].content == "I couldn't search right now."
+
+
+def test_invalid_tool_call_is_retried_once() -> None:
+    model = ScriptedToolModel(
+        script=[AIMessage("Answer.")],
+        calls=[],
+        tool_choices=[],
+        tools_bound=[],
+        invalid_tool_calls=1,
+    )
+    graph = build_chat_graph(model=model, tools=[make_search_tool([])])
+
+    result = graph.invoke({"messages": [HumanMessage("News?")]})
+
+    assert result["messages"][-1].content == "Answer."
+    assert model.tools_bound == [True, True]
+
+
+def test_repeated_invalid_tool_calls_answer_without_tools() -> None:
+    model = ScriptedToolModel(
+        script=[], calls=[], tool_choices=[], tools_bound=[], invalid_tool_calls=2
+    )
+    graph = build_chat_graph(model=model, tools=[make_search_tool([])])
+
+    result = graph.invoke({"messages": [HumanMessage("News?")]})
+
+    assert result["messages"][-1].content == model.forced_answer
+    assert model.tools_bound == [True, True, False]
+
+
+def test_invalid_tool_call_error_detection() -> None:
+    # Non-streamed responses wrap the error object; streamed ones do not.
+    assert is_invalid_tool_call_error(
+        invalid_tool_call_error({"error": {"code": "tool_use_failed"}})
+    )
+    assert is_invalid_tool_call_error(invalid_tool_call_error(None))
+    assert not is_invalid_tool_call_error(RuntimeError("Tool call validation failed"))
 
 
 def test_round_counter_only_counts_the_current_turn() -> None:
@@ -297,5 +351,7 @@ def test_checkpoint_with_tool_steps_is_reused_on_the_next_turn(
     # saved transcript, so the checkpoint is kept and reused.
     assert deleted_threads == []
     follow_up_call = model.calls[-1]
-    assert any(isinstance(m, ToolMessage) for m in follow_up_call)
+    # The earlier answer is sent, but its tool results are not resent.
+    assert any(m.content == "First answer." for m in follow_up_call)
+    assert not any(isinstance(m, ToolMessage) for m in follow_up_call)
     assert follow_up_call[-1].content == "And then?"
